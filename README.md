@@ -3,13 +3,22 @@
 Claude Code'a "manager ol" dediğinde Claude işi kendisi yazmaz: parçalara böler, tmux'ta
 Antigravity CLI (`agy`) işçileri açar, sonuçları kendisi kontrol eder.
 
-- **Gemini 4 Hydrogen** — normal işler
-- **Gemini 4 Neon** — önemli işler ve Hydrogen'in çözemedikleri
-- **Claude** — yalnızca işçilerin çözemediği işler
+Claude patrondur: işi böler, görevleri yazar, dönen her değişikliği kendisi okur ve testleri
+çalıştırır. Kodu yalnızca işçiler çözemediğinde yazar.
 
-Büyük veya riskli işlerde üç kontrol rolü de devreye girer: code review, güvenlik incelemesi ve
-test yazımı. Hangi modelin hangi rolü aldığı `bench/` klasöründeki ölçüme dayanır; ayrıntı ve
-sonuçlar [bench/README.md](bench/README.md) içinde.
+| İş | Kim yapar |
+|---|---|
+| Normal işler | Gemini 4 Hydrogen |
+| Önemli işler ve Hydrogen'in çözemedikleri | Gemini 4 Neon |
+| Hydrogen'in yazdığının review'u | Gemini 4 Neon |
+| Neon'un yazdığının review'u | Claude Opus 5.5 |
+| Güvenlik incelemesi | Claude Opus 5.5 (Neon'a verilmez: Gemini filtresi engelliyor) |
+| Test yazımı | Gemini 4 Hydrogen |
+| İşçilerin çözemediği işler | Claude (yönetici) |
+
+Yazan model kendi işini incelemez. Bu dağılım itibara değil `bench/` klasöründeki ölçümlere
+dayanır; sınavlar ve sonuçlar [bench/README.md](bench/README.md) içinde. Google kotası dolunca
+review ve güvenlik rolleri Claude modellerine kayar.
 
 ## Kurulum
 
@@ -46,6 +55,11 @@ powershell -ExecutionPolicy Bypass -File install.ps1
    - **Python 3** — Mac'te Homebrew ile, Windows'ta winget ile
    - **Antigravity CLI (`agy`)** — Google'ın resmi kurulum scripti (Mac/Linux) veya winget (Windows)
 3. Google hesabının Hydrogen ve Neon'u görüp görmediğini kontrol eder.
+4. İsteğe bağlı iki aracı da kurar ve durumlarını `[opt]` satırıyla bildirir:
+   - **Claude Code CLI (`claude`)** — Opus gibi Claude modellerini işçi olarak çalıştırmak için
+   - **GitHub CLI (`gh`)** — pull request açmak ve birleştirmek için
+
+   Bunlar eksik olsa da kurulum "hazır" sayılır; yalnızca ilgili işler yapılamaz.
 
 Script tekrar tekrar çalıştırılabilir; kurulu olanı yeniden kurmaz.
 
@@ -58,6 +72,8 @@ Script bunları senin yerine yapamaz; gerektiğinde `[you]` satırıyla söyler:
 - **Google girişi:** Terminal'de bir kez `agy` yaz, tarayıcıda Google hesabınla giriş yap.
   Sonra `bash install.sh` komutunu tekrarla; `RESULT: ready.` yazmalı.
 - **Plan:** Hydrogen ve Neon için Google AI Pro, Ultra veya Enterprise planı gerekir.
+- **Claude girişi (isteğe bağlı):** `claude auth login` yaz, tarayıcıda onayla.
+- **GitHub girişi (isteğe bağlı):** `gh auth login --web` yaz; ekrandaki kodu çıkan bağlantıya gir.
 
 ## Kullanım
 
@@ -65,6 +81,11 @@ Claude Code'u projende aç ve şunlardan birini söyle:
 
 - "manager ol, şu işi işçilere dağıt: …"
 - "tmux aç, 3 Hydrogen ile şunları yaptır: …"
+
+Bir işin tipik akışı: Claude işi dosyalara göre böler (iki işçi aynı dosyaya dokunmaz), görevleri
+yazar, işçileri paralel çalıştırır, farkları okur, testleri çalıştırır, önemli değişiklikleri başka
+bir modele inceletir ve sana ne yapıldığını, neyin doğrulandığını ve neyin eksik kaldığını raporlar.
+Commit, push, pull request ve birleştirme yalnızca sen isteyince yapılır.
 
 İşçileri canlı izlemek için ayrı bir terminalde:
 

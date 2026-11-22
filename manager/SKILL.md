@@ -23,6 +23,9 @@ Run the setup script in check mode. It changes nothing and reports each requirem
 It needs no Python itself, so it works on a machine that has nothing but Claude Code. It checks
 Python 3, tmux (psmux on Windows), the Antigravity CLI `agy`, and that the signed-in account can see
 Gemini 4 Hydrogen and Neon.
+It also reports two optional tools as `[opt]`: the `claude` CLI (needed for Claude-model workers
+such as the Opus reviewer) and the GitHub CLI `gh` (needed for pull requests). Missing optional
+tools do not block the work.
 
 - **`RESULT: ready.`** — go on.
 - **`[missing]` lines** — tell the user what is missing and, once they agree, run the same script
@@ -66,6 +69,23 @@ A worker knows nothing about this conversation. Each task file must contain:
 
 Write the task to a temporary file and pass `--task-file`; short tasks can use `--task`.
 
+Every task file for work in an existing project also carries these rules, because workers follow
+them only when they are written down:
+
+- Edit only the files the task lists; name the files that must not be touched (shared test files,
+  schema, migrations, the UI) and say to describe any change needed there instead of making it.
+- Minimal fixes: no refactoring, renaming or reformatting, no behaviour change the task does not
+  mention.
+- No git command that changes state (commit, stash, switch, reset). You own the branch.
+- Do not start, stop or query a database and do not run tests that write to one.
+- The commands that prove the work (compile, unit tests) and that they must still pass.
+- The report must give, per item: file and function changed, what the code does now, every
+  decision made and why, and one concrete test scenario with inputs and the expected result.
+
+When one piece needs judgement (for example "choose the smallest safe fix"), say which invariants
+must hold and ask the worker to list the alternatives it rejected and every reader of the data it
+touched. That report is what you verify against.
+
 ## 4. Dispatch and wait
 
 ```
@@ -92,6 +112,13 @@ A worker's report is a claim, not evidence. For every finished piece:
 3. Check it did what was asked and nothing else: no unrelated edits, no deleted or weakened tests,
    no stubbed-out logic, no files written outside the project.
 
+Compiling and unit tests do not execute SQL. When a change touches queries and the project has
+end-to-end tests with a database that is already running, run them yourself after the workers
+finish (never let workers run them), and say in your report if you could not.
+
+Workers add things you did not ask for. Read the diff for changes outside the brief even when the
+result looks right; decide whether to keep or undo each one and tell the user.
+
 ## 6. Escalate
 
 - **Hydrogen fell short** → write a sharper task that includes what went wrong and re-run it on
@@ -105,6 +132,22 @@ A worker's report is a claim, not evidence. For every finished piece:
 
 Finish with a short summary for the user: what each worker did, which tier, what you verified and
 how, what you had to escalate or do yourself, and anything not done or not verified.
+
+## Git and pull requests
+
+- In a git repository, put the work on its own branch before the first worker starts (ask the user
+  for the branch if they have not named one). Workers edit the working tree; they never commit.
+- Commit, push, open a pull request and merge only when the user asks, each on its own request.
+  Write commit messages and PR descriptions in the project's language and style, listing what
+  changed per file, behaviour changes, how it was verified and what is missing.
+- Use the GitHub CLI: `gh pr create --base <target> --head <branch> --title ... --body-file ...`,
+  then `gh pr checks <n>` once. If `gh` is missing or not signed in, the setup script reports it;
+  sign-in is `gh auth login --web`, which prints a link and a one-time code for the user to enter.
+  Do not drive a browser to create a pull request.
+- Match the repository's history when merging: `gh pr merge <n> --rebase` where the history is
+  linear, `--merge` where merge commits are used. Leave the branch in place unless told otherwise.
+- "CI" means the repository's own checks on the pull request, not a deployment. Say which checks
+  ran and never describe a merge as a release.
 
 ## Reviewer, security and test roles
 
@@ -162,5 +205,12 @@ How to brief each role:
   `--skip-permissions` only after the user agrees, since it auto-approves every tool call.
 - A `claude-*` worker cannot write inside `~/.claude` (Claude Code treats it as protected), so never
   point `--cwd` at a folder under it.
+- The tmux session can end on its own and take every worker in it with it (seen once with six
+  workers on psmux, cause unknown). `orch.py wait` then reports those workers as `LOST`; start
+  them again.
+- Heavy use empties the Google quota within one working session: a run that kept Neon busy hit the
+  limit twice in a few hours, each time with a reset one to two hours away. Give bulk work to
+  Hydrogen, keep Neon for what needs it, and when a worker stops with `RESOURCE_EXHAUSTED` keep what
+  it already wrote (the files are usually complete) instead of starting over.
 - Several `agy` processes run fine in parallel. Plan quotas apply (five-hour and weekly limits);
   if workers start failing with quota errors, stop dispatching and tell the user.

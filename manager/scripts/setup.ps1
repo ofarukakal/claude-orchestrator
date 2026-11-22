@@ -47,6 +47,32 @@ foreach ($p in $packages) {
     else { Write-Miss "$($p.Name)  (fix: winget install --id $($p.Id) -e)" }
 }
 
+# Optional tools: never make the result "not ready".
+#   claude - Claude-model workers (for example the Opus reviewer)
+#   gh     - pull requests
+$optional = @(
+    @{ Name = 'claude'; Id = 'Anthropic.ClaudeCode'; Login = 'claude auth login' },
+    @{ Name = 'gh';     Id = 'GitHub.cli';           Login = 'gh auth login --web' }
+)
+foreach ($p in $optional) {
+    $path = Find-Tool $p.Name
+    if (-not $path -and $Install -and (Find-Tool 'winget')) {
+        "Installing $($p.Name) ($($p.Id)) with winget..."
+        winget install --id $p.Id -e --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity | Select-Object -Last 2
+        Update-SessionPath
+        $path = Find-Tool $p.Name
+    }
+    if (-not $path) { "[opt]     $($p.Name) not installed  (winget install --id $($p.Id) -e)"; continue }
+    $note = ''
+    if ($p.Name -eq 'gh') {
+        & $path auth status *> $null
+        if ($LASTEXITCODE -ne 0) { $note = "  (not signed in: $($p.Login))" }
+    } else {
+        $note = "  (sign in once with: $($p.Login))"
+    }
+    "[opt]     {0,-7} {1}{2}" -f $p.Name, $path, $note
+}
+
 $py = Find-Python
 if ($py -and (Find-Tool 'agy')) {
     $out = & $py (Join-Path $PSScriptRoot 'orch.py') check 2>&1

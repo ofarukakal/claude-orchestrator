@@ -80,6 +80,28 @@ if ! have agy; then
 fi
 have agy && ok "agy       $(command -v agy)  $(agy --version 2>/dev/null | head -n 1)"
 
+# --- optional tools: never make the result "not ready" ----------------------------------------
+#   claude - Claude-model workers (for example the Opus reviewer)
+#   gh     - pull requests
+if have claude; then
+    printf '[opt]     claude    %s  (sign in once with: claude auth login)\n' "$(command -v claude)"
+else
+    printf '[opt]     claude not installed  (see https://claude.com/claude-code)\n'
+fi
+if ! have gh && [ "$INSTALL" = "1" ] && [ "$OS" = "Darwin" ] && have brew; then
+    echo "Installing gh with Homebrew..."
+    brew install gh || true
+fi
+if have gh; then
+    if gh auth status >/dev/null 2>&1; then
+        printf '[opt]     gh        %s\n' "$(command -v gh)"
+    else
+        printf '[opt]     gh        %s  (not signed in: gh auth login --web)\n' "$(command -v gh)"
+    fi
+else
+    printf '[opt]     gh not installed  (macOS: brew install gh)\n'
+fi
+
 # --- sign-in and models -----------------------------------------------------------------------
 if have agy && python_ok; then
     if python3 "$HERE/orch.py" check >/tmp/manager-check.$$ 2>&1; then
