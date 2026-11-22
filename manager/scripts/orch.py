@@ -237,8 +237,16 @@ def cmd_status(_):
 def cmd_wait(a):
     dirs = [run_dir(n) for n in a.names]
     deadline = time.time() + a.timeout_min * 60
+    missing = 0
     while time.time() < deadline and any(state(d) == "RUNNING" for d in dirs):
         time.sleep(5)
+        # If the tmux session is gone, its workers died with it: do not wait out the whole timeout.
+        missing = 0 if session_exists() else missing + 1
+        if missing >= 3:
+            for d in dirs:
+                if state(d) == "RUNNING":
+                    (d / "done").write_text("LOST (tmux session ended before the worker finished)", encoding="utf-8")
+            break
     for d in dirs:
         print("%s: %s" % (d.name, state(d)))
 

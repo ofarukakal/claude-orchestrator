@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 ORCH = HERE.parent / "manager" / "scripts" / "orch.py"
 BENCH_RUNS = Path(tempfile.gettempdir()) / "manager-bench"  # not under ~/.claude: Claude Code refuses to write there
 WORKER_RUNS = Path.home() / ".claude" / "manager-runs"
-EXAMS = ["review", "security", "tests"]
+EXAMS = ["review", "security", "tests", "field"]
 
 
 def key_of(exam):

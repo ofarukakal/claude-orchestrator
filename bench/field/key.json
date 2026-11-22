@@ -1,0 +1,18 @@
+{
+  "kind": "findings",
+  "note": "Each item re-creates a class of bug that was really fixed in a production accounting project; names and data are invented.",
+  "items": [
+    {"id": "amount-thousands", "function": "parse_amount", "pattern": "thousand|1\\.250|separator|group"},
+    {"id": "period-range", "function": "valid_period", "pattern": "month|year|13|range|2000|2099"},
+    {"id": "delete-timezone", "function": "can_delete_receipt", "pattern": "turkey|utc|time ?zone|astimezone|\\+0?3"},
+    {"id": "debt-double-count", "function": "member_debt", "pattern": "latest|last|double|twice|again|sum|carried|every period|all periods"},
+    {"id": "legacy-fabricated", "function": "import_legacy_list", "pattern": "none|unknown|deducted"},
+    {"id": "missing-no-unit", "function": "missing_deductions", "pattern": "no unit|none|unknown|drop|skip|continue|omit"},
+    {"id": "return-manual-split", "function": "check_return_permission", "pattern": "manual|split"},
+    {"id": "return-empty", "function": "validate_return_rows", "pattern": "empty|at least|minimum|zero rows|no rows|between 1|fewer|len\\(rows\\) ?(==|<) ?[01]"},
+    {"id": "distribute-excess", "function": "distribute_return", "pattern": "excess|exceed|beyond|more than|cap|over"},
+    {"id": "plate-refunds", "function": "set_plate", "pattern": "refund"},
+    {"id": "invoice-none-plate", "function": "can_change_purchase", "pattern": "none|empty|missing|\\\"\\\""},
+    {"id": "search-turkish", "function": "search_members", "pattern": "turkish|dotless|casefold|lower|ı|İ"}
+  ]
+}
