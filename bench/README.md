@@ -75,6 +75,7 @@ hataydı. Bulguları, hangi modele ait olduklarını bilmeyen bir hakem kodu aç
 |---|---|---|---|---|---|---|
 | Gemini 4 Neon high | 20 | 4 | 14 | 2 | 0 | 19 dk |
 | Gemini 4 Hydrogen high | 17 | 3 | 9 | 3 | 1 | 8 dk |
+| Claude Fable 5.2 | 9 | 4 | 6 | 0 | 0 | 14,5 dk |
 | Claude Haiku 5.5 | 9 | 4 | 6 | 0 | 0 | 10 dk |
 | Claude Opus 5.5 | 10 | 1 | 6 | 3 | 0 | 8 dk |
 | Claude Sonnet 5.5 | 6 | 1 | 4 | 1 | 0 | 8 dk |
