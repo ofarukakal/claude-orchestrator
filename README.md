@@ -63,6 +63,22 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 Script tekrar tekrar çalıştırılabilir; kurulu olanı yeniden kurmaz.
 
+## Güncelleme
+
+Depoyu güncelledikten sonra skill'i yenilemek için:
+
+```bash
+bash install.sh --update
+```
+
+Windows'ta `powershell -ExecutionPolicy Bypass -File install.ps1 -Update`. Bu mod yalnızca skill
+dosyalarını değiştirir (depodan silinen dosyalar kurulu kopyadan da silinir), hiçbir şey kurmaz ve
+sonunda hazırlık kontrolünü gösterir. Kurulu sürümü görmek için:
+
+```bash
+python3 ~/.claude/skills/manager/scripts/orch.py version
+```
+
 ## Senin yapman gerekenler
 
 Script bunları senin yerine yapamaz; gerektiğinde `[you]` satırıyla söyler:
@@ -104,4 +120,21 @@ manager/scripts/setup.ps1    Windows hazırlık ve kontrol
 bench/                       rol ölçümü: sınavlar, puanlama aracı, sonuçlar
 ```
 
-Çalışma kayıtları `~/.claude/manager-runs/` altında tutulur; silmekte sakınca yoktur.
+## Denetimler
+
+- **Değişiklik denetimi:** her işçi başlamadan önce git çalışma ağacının durumu kaydedilir, bitince
+  karşılaştırılır. İşçi izin verilen yolların (`--allow`) dışına yazdıysa, commit attıysa, branch
+  değiştirdiyse ya da stash'e dokunduysa sonuçta `CHECK FAILED` satırı çıkar. Denetim engellemez,
+  raporlar; depo dışına ve git'in yok saydığı dosyalara yazılanı göremez.
+- **Salt okunur roller:** review ve güvenlik işçileri `--read-only` ile açılır. Claude işçisinde
+  yazma araçları kapalıdır; Gemini işçisinde yazmama talimatı verilir ve yaptığı her değişiklik
+  denetimde hata olarak görünür.
+- **Durumlar:** kota bitince `QUOTA`, süre dolunca `TIMEOUT`, işçinin tmux penceresi kapanınca
+  `LOST` yazılır.
+
+Çalışma kayıtları `~/.claude/manager-runs/` altında tutulur ve proje kodunu içerir. Eskileri
+silmek için:
+
+```bash
+python3 ~/.claude/skills/manager/scripts/orch.py prune --days 14
+```

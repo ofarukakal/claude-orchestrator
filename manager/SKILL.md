@@ -89,23 +89,45 @@ touched. That report is what you verify against.
 ## 4. Dispatch and wait
 
 ```
-orch.py spawn api-fix --tier hydrogen --cwd /path/to/project --task-file /tmp/api-fix.md
-orch.py spawn auth-redesign --tier neon --effort xhigh --cwd /path/to/project --task-file /tmp/auth.md
+orch.py spawn api-fix --tier hydrogen --cwd /path/to/project --task-file /tmp/api-fix.md --allow src/api --allow test/api
+orch.py spawn auth-redesign --tier neon --effort xhigh --cwd /path/to/project --task-file /tmp/auth.md --allow src/auth
 orch.py wait api-fix auth-redesign --timeout-min 9
 orch.py result api-fix auth-redesign
 ```
+
+- **Always pass `--allow`** for work in a git repository: one per file, folder or glob (relative to
+  `--cwd`) the task lets the worker change. The helper records the working tree before the worker
+  starts and compares it afterwards; it does not stop a worker from writing elsewhere, it tells you
+  that it did.
+- **Pass `--read-only`** for review and security roles instead of `--allow`. A `claude-*` worker
+  then has no write tools and no connectors (only reading, searching and
+  `git diff/log/show/status/blame`);
+  an `agy` worker is told not to write and any change it makes is reported.
 
 - Names: letters, digits and dashes. Each worker gets a tmux window of that name in session `orch`.
 - `wait` blocks until the named workers finish or the timeout passes; call it again for long tasks
   (keep each call under the shell tool's own time limit). Do not poll in a tight loop.
 - `status` lists every run, `peek NAME` shows a worker's live screen, `kill NAME` stops one,
   `down` closes the whole session when the job is finished.
+- A finished worker's state is one of: `SUCCESS`; `ERROR` or `NO_RESULT` (read `stderr.log`);
+  `QUOTA` (the Google quota ran out); `TIMEOUT` (it ran past `--timeout-min` and was stopped);
+  `LOST` (its tmux window closed before it finished); `CRASHED` (the helper itself failed);
+  `KILLED`. Any of these can be followed by `| CHECK: ...`, which means the change check failed.
 - The user can watch with `tmux attach -t orch`; mention this once.
-- Run records live in `~/.claude/manager-runs/<timestamp>_<name>/` (task, events, stderr, result).
+- Run records live in `~/.claude/manager-runs/<timestamp>_<name>/` (task, events, stderr, result,
+  change check). They hold project code; `orch.py prune` removes those older than 14 days
+  (`--days N`, `--dry-run` to list first). Run it when a job is finished.
 
 ## 5. Verify — never trust a worker's report
 
-A worker's report is a claim, not evidence. For every finished piece:
+A worker's report is a claim, not evidence. `orch.py result` prints the change check under each
+report: the files that changed while the worker ran, a `!` on those outside `--allow`, and a
+`CHECK FAILED` line when the worker moved `HEAD`, switched branch, touched the stash, wrote outside
+`--allow` or wrote at all in `--read-only`. A failed check is a finding to act on (undo it or keep it
+deliberately, and tell the user), never something to pass over. It compares the working tree only:
+it cannot see files written outside the repository or ignored by git, and when two workers shared a
+directory it says so because it cannot tell their edits apart. A passed check does not replace the
+steps below. For every finished piece:
 
 1. Read the actual diff (`git diff`, or the files themselves).
 2. Run the proving command yourself: tests, build, type-check.
@@ -125,7 +147,10 @@ result looks right; decide whether to keep or undo each one and tell the user.
   **neon**.
 - **Neon fell short**, or the problem needs judgement across the whole codebase → do it yourself.
   This is the only time you write the code.
-- A worker that ends with `NO_RESULT`, `ERROR` or a timeout: read `stderr.log` in its run folder
+- `QUOTA`: do not retry; see the quota rule under the roles below. `TIMEOUT`: the piece was too big
+  or the worker hung; look at what it wrote, then split the task or raise `--timeout-min`. `LOST`:
+  start it again.
+- A worker that ends with `NO_RESULT`, `ERROR` or `CRASHED`: read `stderr.log` in its run folder
   before retrying. Authentication and quota errors are not fixed by retrying — report them.
 
 ## 7. Report
@@ -188,10 +213,12 @@ How to brief each role:
 
 - **Review** — read-only. Give the diff or file list and the spec. Ask for real bugs only (behaviour
   that contradicts the spec, crashes, data corruption, concurrency), each with function, line and
-  the input that triggers it, written to a findings file. Fixes go back to the author, not the
+  the input that triggers it, in its final report (spawn it with `--read-only`; it cannot write a
+  findings file). Fixes go back to the author, not the
   reviewer.
-- **Security** — read-only. Ask for exploitable vulnerabilities only, each with what the attacker
-  sends and what they gain. A finding without a concrete scenario is discarded.
+- **Security** — read-only, spawned with `--read-only`. Ask for exploitable vulnerabilities only,
+  each with what the attacker sends and what they gain. A finding without a concrete scenario is
+  discarded.
 - **Tests** — give the spec, not the implementation's reasoning. Tests must pass on the current code
   and fail if a documented behaviour breaks. Run them yourself before accepting.
 
@@ -207,7 +234,7 @@ How to brief each role:
   point `--cwd` at a folder under it.
 - The tmux session can end on its own and take every worker in it with it (seen once with six
   workers on psmux, cause unknown). `orch.py wait` then reports those workers as `LOST`; start
-  them again.
+  them again. The same happens when a single worker's window closes on its own.
 - Heavy use empties the Google quota within one working session: a run that kept Neon busy hit the
   limit twice in a few hours, each time with a reset one to two hours away. Give bulk work to
   Hydrogen, keep Neon for what needs it, and when a worker stops with `RESOURCE_EXHAUSTED` keep what
