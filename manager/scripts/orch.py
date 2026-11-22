@@ -16,6 +16,16 @@ Standard library only.
   orch.py prune  [--days 14] [--dry-run]
   orch.py version
 
+A job records the user's request, runs the proving commands itself and has the manager's report
+audited by a model of another family. The hook refuses `git commit` and `git push` until it passes.
+
+  orch.py job start   --cwd DIR (--request TEXT | --request-file FILE)
+  orch.py job verify  [--cwd DIR] (-- COMMAND ... | --none REASON)
+  orch.py job audit   [--cwd DIR] (--report TEXT | --report-file FILE) [--model ID]
+  orch.py job show | gate | close   [--cwd DIR]
+  orch.py job abandon [--cwd DIR] --reason TEXT      (the user's decision; the hook refuses it to Claude)
+  orch.py hook-install | hook-uninstall
+
 Watch live with:  tmux attach -t orch
 """
 import argparse
@@ -24,6 +34,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -34,6 +45,10 @@ from pathlib import Path
 
 SESSION = "orch"
 RUNS = Path.home() / ".claude" / "manager-runs"
+JOBS = RUNS / "jobs"
+JOB_TTL = 12 * 3600  # an open job older than this no longer gates anything
+AUDIT_MODEL = "gemini-4-neon-high"
+SETTINGS = Path.home() / ".claude" / "settings.json"
 IS_WIN = os.name == "nt"
 QUOTA_MARKS = ("resource_exhausted", "quota reached", "quota exceeded")
 # What a read-only Claude worker may run in a shell; everything else is refused.
@@ -103,12 +118,12 @@ def read_json(f):
 
 # --- change check: what a worker did to the git working tree -----------------------------------
 
-def git(cwd, *args):
+def git(cwd, *args, env=None):
     exe = find_tool("git")
     if not exe:
         return None
     r = subprocess.run([exe, "-C", str(cwd), *args], capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", stdin=subprocess.DEVNULL)
+                       errors="replace", stdin=subprocess.DEVNULL, env=env)
     return r.stdout if r.returncode == 0 else None
 
 
@@ -195,7 +210,9 @@ def change_check(before, meta, d, started):
         outside = [p for p in changed if not is_allowed(p, after["top"], cwd, meta["allow"])]
         if outside:
             problems.append("%d file(s) changed outside --allow" % len(outside))
-    return {"git": True, "changed": changed, "outside": outside, "problems": problems,
+    # What each changed file looked like when this worker finished: a later edit by anyone else shows.
+    digests = {p: file_digest(Path(after["top"]) / p) for p in changed}
+    return {"git": True, "changed": changed, "outside": outside, "problems": problems, "digests": digests,
             "shared_with": overlapping_workers(d, cwd, started)}
 
 
@@ -253,14 +270,31 @@ def cmd_spawn(a):
     task = Path(a.task_file).read_text(encoding="utf-8") if a.task_file else a.task
     if not task or not task.strip():
         sys.exit("give --task or --task-file")
+    job = None
+    if not a.no_job and common_dir(cwd):
+        job = active_job(cwd, session_id())
+        if not job:
+            sys.exit("no open job for this repository. Start one first:\n"
+                     "  orch.py job start --cwd %s --request-file FILE   (the user's request, word for word)\n"
+                     "or pass --no-job for a piece too small to be worth an audit." % cwd)
+    start_worker(a.name, a.model or "gemini-4-%s-%s" % (a.tier, a.effort), cwd, task, a.timeout_min,
+                 read_only=a.read_only, allow=a.allow, skip_permissions=a.skip_permissions,
+                 job=job[1]["id"] if job else None)
 
-    d = RUNS / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), a.name))
+
+def start_worker(name, model, cwd, task, timeout_min, read_only=False, allow=None, skip_permissions=False,
+                 job=None, audit=False, files=None):
+    """Create the run folder and open the worker's tmux window. `{RUN_DIR}` in the task and the extra
+    files is replaced by the run folder, the one place besides the project a worker can read."""
+    d = RUNS / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), name))
     d.mkdir(parents=True)
-    (d / "task.md").write_text(task, encoding="utf-8")
-    model = a.model or "gemini-4-%s-%s" % (a.tier, a.effort)
+    for fname, text in (files or {}).items():
+        (d / fname).write_text(text, encoding="utf-8")
+    (d / "task.md").write_text(task.replace("{RUN_DIR}", str(d)), encoding="utf-8")
     engine = "claude" if model.startswith("claude") else "agy"
-    meta = {"name": a.name, "model": model, "engine": engine, "cwd": str(cwd), "timeout_min": a.timeout_min,
-            "skip_permissions": a.skip_permissions, "read_only": a.read_only, "allow": a.allow or []}
+    meta = {"name": name, "model": model, "engine": engine, "cwd": str(cwd), "timeout_min": timeout_min,
+            "skip_permissions": skip_permissions, "read_only": read_only, "allow": allow or [],
+            "job": job, "audit": audit}
     (d / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     me = str(Path(__file__).resolve())
@@ -274,12 +308,13 @@ def cmd_spawn(a):
         command = "sh '%s'" % launcher
 
     if session_exists():
-        r = tmux("new-window", "-d", "-t", SESSION, "-n", a.name, command)
+        r = tmux("new-window", "-d", "-t", SESSION, "-n", name, command)
     else:
-        r = tmux("new-session", "-d", "-s", SESSION, "-n", a.name, command)
+        r = tmux("new-session", "-d", "-s", SESSION, "-n", name, command)
     if r.returncode != 0:
         sys.exit("tmux failed to start the window")
-    print("%s -> %s  (%s)" % (a.name, model, d))
+    print("%s -> %s  (%s)" % (name, model, d))
+    return d
 
 
 def read_event(engine, ev):
@@ -525,8 +560,15 @@ def cmd_down(_):
 
 
 def cmd_prune(a):
-    """Remove run records older than --days. A worker that is still running is never touched."""
+    """Remove run and job records older than --days. A worker that is still running is never touched."""
     cutoff = time.time() - a.days * 86400
+    for d in sorted(JOBS.glob("*")) if JOBS.exists() else []:
+        started = read_json(d / "job.json").get("started")
+        if started and started <= cutoff and d.is_dir() and not d.is_symlink():
+            if a.dry_run:
+                print("would remove job %s" % d.name)
+            else:
+                shutil.rmtree(d, ignore_errors=True)
     windows = (live_windows() if find_tool("tmux") else None) or set()
     removed = kept = 0
     for d in sorted(RUNS.glob("*_*")) if RUNS.exists() else []:
@@ -550,6 +592,464 @@ def cmd_prune(a):
 def cmd_version(_):
     f = Path(__file__).resolve().parent.parent / "VERSION"
     print(f.read_text(encoding="utf-8").strip() if f.exists() else "unknown (not installed with the install script)")
+
+
+# --- jobs: the manager's own work is recorded, verified and audited ----------------------------
+
+def session_id():
+    return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
+
+
+def common_dir(cwd):
+    """The repository's shared .git folder: the same for the main checkout and every worktree of it."""
+    out = git(cwd, "rev-parse", "--git-common-dir")
+    if out is None:
+        return None
+    p = Path(out.strip())
+    return str((p if p.is_absolute() else Path(cwd) / p).resolve())
+
+
+def tree_id(top, scratch):
+    """Id of a git tree holding the whole working tree (tracked and untracked, ignore rules applied).
+    Built with a throwaway index, so neither the real index nor any file is touched. Two calls
+    return the same id exactly when no file differs."""
+    index = git(top, "rev-parse", "--git-path", "index")
+    if index is None:
+        return None
+    real = Path(index.strip())
+    real = real if real.is_absolute() else Path(top) / real
+    tmp = Path(scratch) / ("index.%d.tmp" % os.getpid())
+    try:
+        if real.exists():
+            shutil.copyfile(real, tmp)
+        env = dict(os.environ, GIT_INDEX_FILE=str(tmp))
+        if git(top, "add", "-A", env=env) is None:
+            return None
+        return (git(top, "write-tree", env=env) or "").strip() or None
+    finally:
+        for leftover in (tmp, Path(str(tmp) + ".lock")):
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+
+
+def open_jobs(common, session=None):
+    found = []
+    for d in sorted(JOBS.glob("*"), reverse=True) if JOBS.exists() else []:
+        job = read_json(d / "job.json")
+        if not job or job.get("common") != common or (d / "closed").exists():
+            continue
+        if time.time() - job.get("started", 0) > JOB_TTL:
+            continue
+        if session and job.get("session") and job["session"] != session:
+            continue
+        found.append((d, job))
+    return found
+
+
+def active_job(cwd, session=None):
+    common = common_dir(cwd)
+    jobs = open_jobs(common, session) if common else []
+    return jobs[0] if jobs else None
+
+
+def need_job(cwd):
+    job = active_job(Path(cwd).resolve(), session_id())
+    if not job:
+        sys.exit("no open job for this repository - start one with `orch.py job start`")
+    return job
+
+
+def records(d, kind):
+    files = sorted(d.glob(kind + "-*.json"), key=lambda f: int(f.stem.rsplit("-", 1)[1]))
+    return [read_json(f) for f in files]
+
+
+def add_record(d, kind, data):
+    data["n"] = len(records(d, kind)) + 1
+    (d / ("%s-%d.json" % (kind, data["n"]))).write_text(json.dumps(data, indent=2, ensure_ascii=False),
+                                                         encoding="utf-8")
+    return data["n"]
+
+
+def job_workers(job_id):
+    """Every worker started under this job, auditors excluded."""
+    for d in sorted(RUNS.glob("*_*")) if RUNS.exists() else []:
+        meta = read_json(d / "meta.json")
+        if meta.get("job") == job_id and not meta.get("audit"):
+            yield d, meta
+
+
+def audit_outcome(audit):
+    """(state, verdict, text) of an audit record."""
+    rd = RUNS / audit.get("worker", "-")
+    if not rd.is_dir():
+        return "MISSING", None, ""
+    text = read_json(rd / "result.json").get("response", "") or ""
+    found = re.findall(r"VERDICT:\W*(PASS|FAIL)\b", text)
+    return state(rd), (found[-1] if found else None), text.strip()
+
+
+def verification_ok(v):
+    return v.get("exit") == 0 or v.get("cmd") is None
+
+
+def gate(d, job, tree=None):
+    """Why this job's work may not be committed or pushed yet; an empty list means it may."""
+    tree = tree or tree_id(job["top"], d)
+    reasons = []
+    verifications = records(d, "verify")
+    latest = {}
+    for v in verifications:
+        if v.get("tree") == tree:
+            latest[v.get("cmd")] = v
+    if not verifications:
+        reasons.append("no verification recorded: run `orch.py job verify -- <proving command>`")
+    elif not latest:
+        reasons.append("files changed after the last verification: run it again")
+    else:
+        for v in latest.values():
+            if not verification_ok(v):
+                reasons.append("verification #%d failed (exit %s): %s" % (v["n"], v.get("exit"), v.get("cmd")))
+    audits = records(d, "audit")
+    if not audits:
+        reasons.append("no audit: run `orch.py job audit --report-file <your report to the user>`")
+    else:
+        last = audits[-1]
+        worker_state, verdict, _ = audit_outcome(last)
+        if worker_state == "RUNNING":
+            reasons.append("the audit is still running: `orch.py wait %s`" % worker_name(RUNS / last["worker"]))
+        elif not worker_state.startswith("SUCCESS"):
+            reasons.append("the audit worker ended with %s: run the audit again "
+                           "(with another --model if the quota ran out)" % worker_state)
+        elif last.get("tree") != tree:
+            reasons.append("files changed after the audit: verify and audit again")
+        elif verdict != "PASS":
+            reasons.append("the auditor's verdict is %s" % (verdict or "missing"))
+    return reasons
+
+
+AUDIT_TASK = """You are an independent auditor. A manager (an AI model) ran a job for a user in the project
+directory and wrote a report about it. Your job is to find where the report and the work disagree
+with each other and with what the user asked for. Assume the report may be wrong or incomplete.
+This is a read-only task: change nothing.
+
+Read these files first (they are in {RUN_DIR}):
+
+- request.md       what the user asked for, in the user's own words
+- report.md        what the manager says was done
+- diff.patch       every change made to the repository during the job (the ground truth)
+- verification.txt the proving commands the helper ran itself, with exit codes and output
+- workers.txt      the workers the manager used, their end states and failed change checks
+
+You may read any file in the project directory to check a claim.
+
+%(unreviewed)s
+
+Write your findings under these headings, each finding with the file and line it rests on, as
+plain text like `calc.py:12` (no links). Write "none" under a heading that has nothing.
+
+1. CLAIMED BUT NOT DONE - statements in report.md that diff.patch or verification.txt do not
+   support. "Tests pass" without a passing run recorded on the final files belongs here.
+2. ASKED BUT MISSING - parts of request.md that were neither done nor named in report.md as not
+   done.
+3. DONE BUT NOT REPORTED - changes in diff.patch that report.md does not mention.
+4. NOT ASKED FOR - changes that request.md does not call for.
+5. BUGS - real defects in the changed code (wrong behaviour, crashes, data loss, security), each
+   with the function, the line and the input that triggers it. No style remarks.
+
+Do not fix anything and do not soften anything. Your text goes to the user unedited.
+
+End with exactly one line, `VERDICT: PASS` or `VERDICT: FAIL`. It is FAIL when heading 1 or 2 has
+any finding, or when heading 3, 4 or 5 has a finding the user would want to know before accepting
+the work.
+"""
+
+
+def cmd_job_start(a):
+    cwd = Path(a.cwd).resolve()
+    top = git(cwd, "rev-parse", "--show-toplevel") if cwd.is_dir() else None
+    if top is None:
+        sys.exit("a job needs a git repository: there is nothing to compare the work against in %s" % cwd)
+    top = top.strip()
+    request = Path(a.request_file).read_text(encoding="utf-8") if a.request_file else a.request
+    if not request or not request.strip():
+        sys.exit("give the user's request word for word with --request or --request-file")
+    existing = active_job(cwd, session_id())
+    if existing:
+        sys.exit("job %s is already open for this repository: close it first (`orch.py job close`)"
+                 % existing[1]["id"])
+    job_id = time.strftime("%Y%m%d-%H%M%S")
+    d = JOBS / job_id
+    d.mkdir(parents=True)
+    (d / "request.md").write_text(request, encoding="utf-8")
+    base = tree_id(top, d)
+    if not base:
+        shutil.rmtree(d, ignore_errors=True)
+        sys.exit("could not record the starting state of %s" % top)
+    job = {"id": job_id, "cwd": str(cwd), "top": top, "common": common_dir(cwd), "session": session_id(),
+           "started": time.time(), "base_tree": base, "head": (git(top, "rev-parse", "HEAD") or "").strip()}
+    (d / "job.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
+    print("job %s opened for %s" % (job_id, top))
+    print("next: spawn workers, then `job verify -- <command>`, `job audit --report-file <report>`, `job show`")
+
+
+def cmd_job_verify(a):
+    d, job = need_job(a.cwd)
+    if a.none:
+        n = add_record(d, "verify", {"cmd": None, "reason": a.none, "exit": None, "at": time.time(),
+                                     "tree": tree_id(job["top"], d)})
+        print("-- verify #%d: recorded that nothing proves this work (%s). The auditor will see this." % (n, a.none))
+        return
+    cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    if not cmd:
+        sys.exit("give the proving command after --, or --none REASON")
+    if len(cmd) == 1:
+        line = cmd[0]
+    else:
+        line = subprocess.list2cmdline(cmd) if IS_WIN else " ".join(shlex.quote(c) for c in cmd)
+    n = len(records(d, "verify")) + 1
+    log = d / ("verify-%d.log" % n)
+    began = time.time()
+    with open(log, "w", encoding="utf-8") as out:
+        try:
+            code = subprocess.run(line, shell=True, cwd=job["cwd"], stdout=out, stderr=subprocess.STDOUT,
+                                  stdin=subprocess.DEVNULL, timeout=a.timeout_min * 60).returncode
+        except subprocess.TimeoutExpired:
+            code = "timeout"
+    add_record(d, "verify", {"cmd": line, "exit": code, "seconds": round(time.time() - began, 1),
+                             "at": time.time(), "log": log.name, "tree": tree_id(job["top"], d)})
+    print("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]))
+    print("-- verify #%d: exit %s (%.0fs), recorded: %s" % (n, code, time.time() - began, line))
+    sys.exit(0 if code == 0 else 1)
+
+
+def cmd_job_audit(a):
+    d, job = need_job(a.cwd)
+    report = Path(a.report_file).read_text(encoding="utf-8") if a.report_file else a.report
+    if not report or not report.strip():
+        sys.exit("give the report you are about to send the user with --report or --report-file")
+    top = job["top"]
+    tree = tree_id(top, d)
+    if not tree:
+        sys.exit("could not read the current state of %s" % top)
+    names = (git(top, "diff", "--name-only", "--no-renames", job["base_tree"], tree) or "").splitlines()
+    patch = git(top, "diff", job["base_tree"], tree) or ""
+    stat = git(top, "diff", "--stat", job["base_tree"], tree) or ""
+
+    by_worker, workers = {}, []
+    for rd, meta in job_workers(job["id"]):
+        check = read_json(rd / "check.json")
+        workers.append("%s  model=%s%s  %s" % (meta.get("name"), meta.get("model"),
+                                               "  read-only" if meta.get("read_only") else "", state(rd)))
+        workers.extend("    changed outside what it was allowed: %s" % p for p in check.get("outside") or [])
+        if not meta.get("read_only"):
+            for p, digest in (check.get("digests") or {}).items():
+                by_worker.setdefault(p, set()).add(digest)
+    # A changed file whose present content no worker left behind was written or edited by the manager.
+    unreviewed = [p for p in names if file_digest(Path(top) / p) not in by_worker.get(p, ())]
+    if unreviewed:
+        note = ("These changed files were written or last edited by the manager itself, outside any worker "
+                "run, and nobody else has read them. Review them as a code reviewer would:\n\n"
+                + "\n".join("- " + p for p in unreviewed))
+    else:
+        note = "Every changed file was last written by a worker; none was edited by the manager afterwards."
+
+    verification = []
+    for v in records(d, "verify"):
+        on_final = "on the final files" if v.get("tree") == tree else "STALE: files changed after this run"
+        if v.get("cmd") is None:
+            verification.append("#%d  no proving command - the manager's reason: %s  [%s]"
+                                % (v["n"], v.get("reason"), on_final))
+            continue
+        verification.append("#%d  exit %s  [%s]  %s" % (v["n"], v.get("exit"), on_final, v["cmd"]))
+        try:
+            tail = (d / v["log"]).read_text(encoding="utf-8", errors="replace").splitlines()[-40:]
+        except (OSError, KeyError):
+            tail = []
+        verification.extend("    | " + line for line in tail)
+
+    n = len(records(d, "audit")) + 1
+    (d / ("report-%d.md" % n)).write_text(report, encoding="utf-8")
+    files = {
+        "request.md": (d / "request.md").read_text(encoding="utf-8"),
+        "report.md": report,
+        "diff.patch": "%d file(s) changed:\n%s\n%s" % (len(names), stat, patch),
+        "verification.txt": ("\n".join(verification) or "No verification was recorded.") + "\n",
+        "workers.txt": ("\n".join(workers) or "No workers were used: the manager did all of the work itself.") + "\n",
+    }
+    if a.model.startswith("claude"):
+        print("note: %s is the manager's own model family. Tell the user the audit was not independent "
+              "in that sense." % a.model)
+    name = "audit%d-%s" % (n, job["id"])
+    rd = start_worker(name, a.model, top, AUDIT_TASK % {"unreviewed": note}, a.timeout_min, read_only=True,
+                      job=job["id"], audit=True, files=files)
+    add_record(d, "audit", {"worker": rd.name, "model": a.model, "tree": tree, "at": time.time(),
+                            "unreviewed": unreviewed})
+    print("next: `orch.py wait %s`, then `orch.py job show` and give the user its output unedited" % name)
+
+
+def cmd_job_show(a):
+    d, job = need_job(a.cwd)
+    tree = tree_id(job["top"], d)
+    print("=== JOB %s  %s ===" % (job["id"], job["top"]))
+    print("--- the user's request, as recorded ---")
+    print((d / "request.md").read_text(encoding="utf-8").strip())
+    print("\n--- verification (run by the helper, not reported by the manager) ---")
+    verifications = records(d, "verify")
+    for v in verifications:
+        fresh = "final files" if v.get("tree") == tree else "STALE"
+        if v.get("cmd") is None:
+            print("#%d  no proving command: %s  [%s]" % (v["n"], v.get("reason"), fresh))
+        else:
+            print("#%d  exit %s  [%s]  %s" % (v["n"], v.get("exit"), fresh, v["cmd"]))
+    if not verifications:
+        print("none")
+    audits = records(d, "audit")
+    if audits:
+        last = audits[-1]
+        worker_state, verdict, text = audit_outcome(last)
+        fresh = "final files" if last.get("tree") == tree else "STALE: files changed after it"
+        print("\n--- audit #%d by %s  [%s]  %s ---" % (last["n"], last.get("model"), fresh, worker_state))
+        print(text or "(no text yet)")
+    else:
+        print("\n--- audit ---\nnone")
+    reasons = gate(d, job, tree)
+    print("\n--- gate ---")
+    print("\n".join("BLOCKED: " + r for r in reasons) if reasons else "OPEN: verified and audited on the final files")
+
+
+def cmd_job_gate(a):
+    d, job = need_job(a.cwd)
+    reasons = gate(d, job)
+    print("\n".join("BLOCKED: " + r for r in reasons) if reasons else "OPEN")
+    sys.exit(2 if reasons else 0)
+
+
+def cmd_job_close(a):
+    d, job = need_job(a.cwd)
+    reasons = gate(d, job)
+    if reasons:
+        print("\n".join("BLOCKED: " + r for r in reasons))
+        sys.exit("job %s stays open. Only the user can end it without an audit: `orch.py job abandon`" % job["id"])
+    (d / "closed").write_text("closed %s" % time.strftime("%Y-%m-%d %H:%M:%S"), encoding="utf-8")
+    print("job %s closed" % job["id"])
+
+
+def cmd_job_abandon(a):
+    d, job = need_job(a.cwd)
+    (d / "closed").write_text("abandoned %s: %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), a.reason), encoding="utf-8")
+    print("job %s abandoned without passing the gate: %s" % (job["id"], a.reason))
+
+
+# --- hook: Claude Code runs this before every Bash call ----------------------------------------
+
+def git_writes(command, cwd):
+    """Folders in which this shell command runs `git commit` or `git push`."""
+    try:
+        tokens = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        tokens = command.split()
+    here, folders = Path(cwd), []
+    for i, tok in enumerate(tokens):
+        tok = tok.lstrip("(").rstrip(";")
+        if tok == "cd" and i + 1 < len(tokens):
+            here = (here / os.path.expanduser(tokens[i + 1].rstrip(";"))).resolve()
+        if tok != "git" and not tok.endswith("/git"):
+            continue
+        where, rest = here, tokens[i + 1:]
+        while rest:
+            arg = rest.pop(0)
+            if arg in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+                value = rest.pop(0) if rest else ""
+                if arg == "-C":
+                    where = (where / os.path.expanduser(value)).resolve()
+            elif not arg.startswith("-"):
+                if arg.rstrip(";") in ("commit", "push"):
+                    folders.append(where)
+                break
+    return folders
+
+
+def hook_verdict(data):
+    if data.get("tool_name") != "Bash":
+        return None
+    command = (data.get("tool_input") or {}).get("command") or ""
+    if re.search(r"orch\.py\S*\s+job\s+abandon\b", command):
+        return ("`orch.py job abandon` ends a job without an audit. That is the user's decision: ask them to "
+                "run it in their own terminal if they want it.")
+    session = data.get("session_id") or session_id()
+    for folder in git_writes(command, data.get("cwd") or os.getcwd()):
+        if not folder.is_dir():
+            continue
+        found = active_job(folder, session)
+        if not found:
+            continue
+        d, job = found
+        reasons = gate(d, job)
+        if reasons:
+            return ("Manager job %s is open for %s and its work has not passed the gate:\n%s\n"
+                    "Commit and push stay blocked until it does (`orch.py job show`). Only the user can lift this, "
+                    "by running `orch.py job abandon --reason ...` in their own terminal."
+                    % (job["id"], job["top"], "\n".join("- " + r for r in reasons)))
+    return None
+
+
+def cmd_hook(_):
+    # Fail open: a broken hook must never stop ordinary work in every session on the machine.
+    try:
+        verdict = hook_verdict(json.load(sys.stdin))
+    except Exception as e:
+        print("manager hook error (not blocking): %s" % e, file=sys.stderr)
+        sys.exit(0)
+    if verdict:
+        print(verdict, file=sys.stderr)
+        sys.exit(2)
+
+
+def hook_command():
+    return '"%s" "%s" hook' % (sys.executable, Path(__file__).resolve())
+
+
+def is_our_hook(entry):
+    return any("orch.py" in (h.get("command") or "") and (h.get("command") or "").rstrip().endswith(" hook")
+               for h in entry.get("hooks") or [])
+
+
+def edit_settings(install):
+    settings = {}
+    if SETTINGS.exists():
+        try:
+            settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
+        except ValueError:
+            sys.exit("%s is not valid JSON; fix it first, nothing was changed" % SETTINGS)
+        backup = SETTINGS.with_name(SETTINGS.name + ".before-manager-hook")
+        if not backup.exists():
+            shutil.copyfile(SETTINGS, backup)
+    pre = [e for e in settings.get("hooks", {}).get("PreToolUse", []) if not is_our_hook(e)]
+    if install:
+        pre.append({"matcher": "Bash", "hooks": [{"type": "command", "command": hook_command(), "timeout": 60}]})
+    hooks = settings.setdefault("hooks", {})
+    if pre:
+        hooks["PreToolUse"] = pre
+    else:
+        hooks.pop("PreToolUse", None)
+    if not hooks:
+        settings.pop("hooks")
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def cmd_hook_install(_):
+    edit_settings(True)
+    print("hook installed in %s: `git commit` and `git push` by Claude are refused while a manager job "
+          "is open and unaudited. New sessions pick it up." % SETTINGS)
+
+
+def cmd_hook_uninstall(_):
+    edit_settings(False)
+    print("hook removed from %s" % SETTINGS)
 
 
 def main():
@@ -576,6 +1076,8 @@ def main():
     s.add_argument("--allow", action="append", metavar="PATH",
                    help="file, folder or glob (relative to --cwd) the worker may change; repeatable. "
                         "Changes elsewhere are reported as a failed check")
+    s.add_argument("--no-job", action="store_true",
+                   help="start a worker in a git repository without an open job (nothing will audit it)")
     s.add_argument("--read-only", action="store_true",
                    help="reviewer mode: a claude-* worker gets no write tools; any change to the working tree "
                         "is reported as a failed check")
@@ -600,6 +1102,31 @@ def main():
     x.add_argument("--dry-run", action="store_true")
     x.set_defaults(fn=cmd_prune)
     sub.add_parser("version").set_defaults(fn=cmd_version)
+    sub.add_parser("hook").set_defaults(fn=cmd_hook)
+    sub.add_parser("hook-install").set_defaults(fn=cmd_hook_install)
+    sub.add_parser("hook-uninstall").set_defaults(fn=cmd_hook_uninstall)
+
+    job = sub.add_parser("job").add_subparsers(dest="job_command", required=True)
+    for name, fn in (("start", cmd_job_start), ("verify", cmd_job_verify), ("audit", cmd_job_audit),
+                     ("show", cmd_job_show), ("gate", cmd_job_gate), ("close", cmd_job_close),
+                     ("abandon", cmd_job_abandon)):
+        x = job.add_parser(name)
+        x.add_argument("--cwd", default=".")
+        x.set_defaults(fn=fn)
+        if name == "start":
+            x.add_argument("--request")
+            x.add_argument("--request-file")
+        elif name == "verify":
+            x.add_argument("--none", metavar="REASON", help="record that nothing can prove this work, and why")
+            x.add_argument("--timeout-min", type=float, default=20)
+            x.add_argument("cmd", nargs=argparse.REMAINDER)
+        elif name == "audit":
+            x.add_argument("--report")
+            x.add_argument("--report-file")
+            x.add_argument("--model", default=AUDIT_MODEL)
+            x.add_argument("--timeout-min", type=int, default=30)
+        elif name == "abandon":
+            x.add_argument("--reason", required=True)
 
     a = p.parse_args()
     a.fn(a)

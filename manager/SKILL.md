@@ -40,6 +40,43 @@ tools do not block the work.
 After an install, re-run the check until it says ready. A freshly installed tool may not be on PATH
 in the current shell; the helper also looks in `~/.local/bin` and the Homebrew folders.
 
+## You are audited too
+
+Workers are checked by you; you are checked by the helper and by a model of another family. In a
+git repository every manager task runs inside a **job**:
+
+1. `orch.py job start --cwd DIR --request-file FILE` before anything else. The file holds the
+   user's request **word for word**, copied from their messages, not your summary of them (several
+   messages: all of them, in order). `spawn` refuses to start a worker without an open job.
+2. Do the work (sections 2 to 6).
+3. `orch.py job verify --cwd DIR -- <proving command>` for each command that proves the work
+   (tests, build, type-check). The helper runs it and records the exit code and output; a command
+   you ran yourself in the shell does not count. If nothing can prove the work (documentation
+   only), say why with `--none "reason"`.
+4. Write the report you intend to give the user into a file, then
+   `orch.py job audit --cwd DIR --report-file FILE` and `orch.py wait <the name it prints>`. The
+   auditor (Gemini 4 Neon, read-only) gets the request, your report, the real diff since the job
+   started, the verification record and the workers' check results, and compares them: claimed but
+   not done, asked but missing, done but not reported, not asked for. Files you wrote or edited
+   yourself are listed for it to review as code, because nobody else has read them.
+5. `orch.py job show --cwd DIR`, and give the user its output **unedited and in full** before your
+   own summary. Do not paraphrase it, trim it or answer it in place of showing it.
+6. `VERDICT: FAIL`: fix what it found (through a worker where possible), then verify and audit
+   again. Any file change after a verification or an audit makes it stale. If you think a finding
+   is wrong, show it to the user anyway and say why; the user decides.
+7. `orch.py job close --cwd DIR` once the gate is open.
+
+A hook installed with the skill refuses `git commit` and `git push` from this session while the job
+is open and its gate is blocked. Only the user can end a job without a passing audit
+(`orch.py job abandon`, in their own terminal). Never run it, never edit a job's records, and never
+offer it as a way around a finding.
+
+Small pieces (a file or two, a few lines, nothing risky) may skip the job: pass `--no-job` to
+`spawn` and tell the user the work was not audited.
+
+When the Google quota is out, `job audit --model claude-opus-5-5` runs the audit in a fresh context;
+tell the user the auditor was of your own family.
+
 ## 2. Plan the split
 
 - Break the request into pieces that can each be described completely in a task file.
@@ -130,7 +167,8 @@ directory it says so because it cannot tell their edits apart. A passed check do
 steps below. For every finished piece:
 
 1. Read the actual diff (`git diff`, or the files themselves).
-2. Run the proving command yourself: tests, build, type-check.
+2. Run the proving command yourself: tests, build, type-check. When the work is finished, run it
+   once more through `orch.py job verify` so that it is on record.
 3. Check it did what was asked and nothing else: no unrelated edits, no deleted or weakened tests,
    no stubbed-out logic, no files written outside the project.
 
@@ -156,13 +194,17 @@ result looks right; decide whether to keep or undo each one and tell the user.
 ## 7. Report
 
 Finish with a short summary for the user: what each worker did, which tier, what you verified and
-how, what you had to escalate or do yourself, and anything not done or not verified.
+how, what you had to escalate or do yourself, and anything not done or not verified. This is the
+report that goes through `job audit`; the user gets the output of `job show` first and your summary
+after it.
 
 ## Git and pull requests
 
 - In a git repository, put the work on its own branch before the first worker starts (ask the user
   for the branch if they have not named one). Workers edit the working tree; they never commit.
 - Commit, push, open a pull request and merge only when the user asks, each on its own request.
+  While a job is open the hook refuses commit and push until the work is verified and audited on
+  the files as they are now; a refusal names what is missing.
   Write commit messages and PR descriptions in the project's language and style, listing what
   changed per file, behaviour changes, how it was verified and what is missing.
 - Use the GitHub CLI: `gh pr create --base <target> --head <branch> --title ... --body-file ...`,

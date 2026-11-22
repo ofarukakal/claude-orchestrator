@@ -49,7 +49,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 ## Kurulum scripti ne yapar
 
-1. Skill'i `~/.claude/skills/manager` altına kopyalar.
+1. Skill'i `~/.claude/skills/manager` altına kopyalar ve denetim hook'unu
+   `~/.claude/settings.json` dosyasına ekler (aşağıda "Yöneticinin denetimi").
 2. Eksikleri kurar:
    - **tmux** — Mac'te Homebrew ile, Windows'ta winget ile `psmux` (tmux karşılığı)
    - **Python 3** — Mac'te Homebrew ile, Windows'ta winget ile
@@ -119,6 +120,41 @@ manager/scripts/setup.sh     Mac/Linux hazırlık ve kontrol
 manager/scripts/setup.ps1    Windows hazırlık ve kontrol
 bench/                       rol ölçümü: sınavlar, puanlama aracı, sonuçlar
 ```
+
+## Yöneticinin denetimi
+
+İşçileri yönetici (Claude) denetler; yöneticiyi de araç ve başka aileden bir model denetler. Git
+deposunda yapılan her iş bir **iş kaydı** içinde yürür:
+
+1. **İstek kaydı:** iş başlarken senin isteğin kelimesi kelimesine kaydedilir, depo durumu
+   sabitlenir. İş kaydı olmadan işçi açılamaz.
+2. **Kanıt:** test, build gibi kanıt komutlarını yönetici değil araç çalıştırır; çıkış kodu ve çıktı
+   kayda geçer.
+3. **Denetçi:** iş bitince salt okunur bir Gemini 4 Neon işçisi isteği, yöneticinin raporunu,
+   gerçek diff'i ve kanıt kaydını karşılaştırır: raporda olup yapılmayan, istenip eksik kalan,
+   yapılıp raporlanmayan, istenmeden yapılan. Yöneticinin kendi yazdığı dosyaları ayrıca kod
+   olarak inceler. Çıktısı sana özetlenmeden gösterilir ve `VERDICT: PASS` ya da `FAIL` ile biter.
+4. **Kapı:** kurulumla gelen hook, iş kaydı açıkken ve denetim geçmemişken Claude'un
+   `git commit` ve `git push` komutlarını durdurur. Dosyalar denetimden sonra değişirse kanıt ve
+   denetim geçersiz sayılır.
+
+Denetimi geçmeyen bir işi yalnızca sen sonlandırabilirsin; kendi terminalinde:
+
+```bash
+python3 ~/.claude/skills/manager/scripts/orch.py job abandon --reason "neden"
+```
+
+Hook yalnızca açık bir yönetici işi olan depoda ve o işi başlatan oturumda devreye girer; diğer
+oturumlara ve normal commit'lere dokunmaz. 12 saatten eski açık işler kapıyı tutmaz.
+`~/.claude/settings.json` dosyasına yazılır (ilk değişiklikten önce yanına bir yedek bırakılır).
+Kaldırmak için:
+
+```bash
+python3 ~/.claude/skills/manager/scripts/orch.py hook-uninstall
+```
+
+Hook'suz kurulum için `bash install.sh --no-hook`. Sınırı: hook atlamayı ve unutmayı engeller;
+kayıt dosyalarını elle değiştiren birini durdurmaz.
 
 ## Denetimler
 

@@ -2,7 +2,8 @@
 #
 #   install.ps1          copy the skill, then install what the machine lacks
 #   install.ps1 -Update  copy the skill only and report what is present (installs nothing)
-param([switch]$Update)
+#   -NoHook              with either: do not add the audit hook to .claude\settings.json
+param([switch]$Update, [switch]$NoHook)
 $ErrorActionPreference = 'Stop'
 $dest = Join-Path $env:USERPROFILE '.claude\skills\manager'
 
@@ -28,4 +29,14 @@ Move-Item $new $dest
 
 if ($Update) { & (Join-Path $dest 'scripts\setup.ps1') }
 else { & (Join-Path $dest 'scripts\setup.ps1') -Install }
-exit $LASTEXITCODE
+$status = $LASTEXITCODE
+
+# The hook that refuses commit and push while a manager job is open and unaudited.
+if (-not $NoHook) {
+    ''
+    $orch = Join-Path $dest 'scripts\orch.py'
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) { & $py.Source $orch hook-install }
+    else { "[you]     the audit hook was not installed; once Python is there run: python `"$orch`" hook-install" }
+}
+exit $status
