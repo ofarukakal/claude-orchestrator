@@ -86,3 +86,20 @@ hataydı. Bulguları, hangi modele ait olduklarını bilmeyen bir hakem kodu aç
   Doğrulanan 19 ayrı hatadan 12'si projenin güncel kodunda hâlâ duruyordu.
 - Argon ilk denemede kendi alt ajanlarını başlatıp sonuç beklerken bitti ve hiçbir şey yazmadı.
 - Tek koşu ve tek hakem; hakem bir Claude alt ajanıydı.
+
+### Neon'un kodunu kim inceleyebilir (depoda yok)
+
+Neon'a 682 satırlık bir tahakkuk çekirdeği yazdırıldı (SQLite defteri, devir, tam liraya yuvarlama,
+istifa kapaması, iade, ödeme). Kod 97 gizli testin hepsinden geçti. Sonra koda yedi ileri düzey
+hata gömüldü: hata durumunda yarım işlemin kaydedilmesi, devrin yanlış satırdan alınması,
+yuvarlamanın geri alınmaması, ileri tarihli istifa, istifacıya iade, boş dönemin sayılmaması, satır
+yazma koşulu. Her biri tek başına en az bir gizli testte yakalanıyordu.
+
+| Reviewer | Temiz kod | Hatalı kod (7 gömülü) | Yanlış alarm | Süre |
+|---|---|---|---|---|
+| Claude Fable 5.2 | 2 eksik teslimat + 1 gerçek sınır durumu | 7/7, yedisini de çalıştırarak gösterdi | 0 | 6 dk, 4 dk |
+| Claude Opus 5.5 | 2 eksik teslimat | 7/7, altısını çalıştırarak, birini okuyarak | 0 | 2 dk, 3 dk |
+
+Her bulgunun yeniden üretme kodu hem hatalı kopyada hem temiz kodda çalıştırıldı; hepsi yalnızca
+hatalı kopyada yanlış sonuç verdi. Sonuç: Neon düzeyindeki kodu incelemek için ikisi de yeterli.
+Tek koşu; tanım yazılı ve tek paketti.
