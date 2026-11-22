@@ -116,19 +116,18 @@ A role's report is still a claim; it narrows what you verify, it does not replac
 
 | Role | When | Model (`--model`) | If that model wrote the code |
 |---|---|---|---|
-| Code review | non-trivial diffs | `gemini-4-neon-high` | `claude-fable-5-2` |
+| Code review | non-trivial diffs | `gemini-4-neon-high` | `claude-opus-5-5` |
 | Security review | auth, permissions, user input, SQL, file upload/download, payments, secrets, new dependencies | `claude-opus-5-5` | `gemini-4-hydrogen-high` |
 | Test writing | behaviour that has a clear spec | `gemini-4-hydrogen-high` | `gemini-4-neon-high` |
 
 - **Review picks come from a real-code audit** (6,900 lines, no spec, blind-judged): Neon reported the
   most confirmed bugs (18, none wrong) but took about 19 minutes; Hydrogen reported 12 in 8 minutes.
   Use Hydrogen as the reviewer when time matters more than depth.
-- **Neon's own work is reviewed by Fable**, in a fresh context that sees only the diff and the
-  intent (a `claude-fable-5-2` worker, or your own subagent on that model), not by you from
-  memory of the task you wrote. In the same audit Fable reported 9 findings and all 9 were
-  confirmed (Opus: 7 of 10); it finds fewer bugs than Neon but does not raise false ones, and it is
-  a different model family. It draws on the user's Claude usage limit; if that is close, use
-  `claude-opus-5-5` instead and say so.
+- **Neon's own work is reviewed by Opus**, in a fresh context that sees only the diff and the
+  intent (a `claude-opus-5-5` worker, or your own subagent on that model), not by you from
+  memory of the task you wrote. Measured on Neon-written code with seven advanced defects seeded
+  in: Opus and Fable both found all seven with no false alarms, so the cheaper one is used. Use
+  `claude-fable-5-2` instead only when the user asks for it.
 - **Do not rely on Argon for large tasks.** In one of two runs it started its own subagents, ended
   its turn "waiting for results" and produced nothing after 19 minutes.
 - **When the Google quota runs out** (`RESOURCE_EXHAUSTED`, "Individual quota reached"), do not
