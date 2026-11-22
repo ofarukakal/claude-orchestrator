@@ -1,0 +1,24 @@
+{
+  "kind": "mutation",
+  "module": "billing.py",
+  "test_file": "test_billing.py",
+  "items": [
+    {"id": "merge-contained", "old": "out[-1] = (ls, max(le, e))", "new": "out[-1] = (ls, e)"},
+    {"id": "merge-touching", "old": "if s <= le:", "new": "if s < le:"},
+    {"id": "merge-unsorted", "old": "intervals = sorted(intervals)", "new": "intervals = list(intervals)"},
+    {"id": "split-negative-huge", "old": "base, rem = divmod(total_cents, n)", "new": "base = int(total_cents / n)\n    rem = total_cents - base * n"},
+    {"id": "split-order", "old": "return [base + 1] * rem + [base] * (n - rem)", "new": "return [base] * (n - rem) + [base + 1] * rem"},
+    {"id": "split-n-zero", "old": "if n <= 0:\n        raise ValueError(\"n must be positive\")", "new": "if n < 0:\n        raise ValueError(\"n must be positive\")"},
+    {"id": "duration-ms", "old": "_PART = re.compile(r\"(\\d+)\\s*(ms|h|m|s)\\s*\")", "new": "_PART = re.compile(r\"(\\d+)\\s*(h|m|s|ms)\\s*\")"},
+    {"id": "duration-malformed", "old": "if not stripped or not re.fullmatch(r\"(?:\\d+\\s*(?:ms|h|m|s)\\s*)+\", stripped):", "new": "if not stripped or not _PART.search(stripped):"},
+    {"id": "duration-empty", "old": "if not stripped or not re.fullmatch(", "new": "if stripped and not re.fullmatch("},
+    {"id": "duration-minute", "old": "\"m\": 60.0", "new": "\"m\": 60.0 * 60"},
+    {"id": "lru-get-recency", "old": "        self._data.move_to_end(key)\n        return self._data[key]", "new": "        return self._data[key]"},
+    {"id": "lru-update-evicts", "old": "if key not in self._data and len(self._data) >= self.capacity:", "new": "if len(self._data) >= self.capacity:"},
+    {"id": "lru-capacity", "old": "len(self._data) >= self.capacity:", "new": "len(self._data) > self.capacity:"},
+    {"id": "lru-put-recency", "old": "        self._data[key] = value\n        self._data.move_to_end(key)", "new": "        self._data[key] = value"},
+    {"id": "mavg-last-window", "old": "for i in range(len(xs) - k + 1):", "new": "for i in range(len(xs) - k):"},
+    {"id": "mavg-k-zero", "old": "if k <= 0:\n        raise ValueError(\"k must be positive\")", "new": "if k < 0:\n        raise ValueError(\"k must be positive\")"},
+    {"id": "mavg-int-division", "old": "sum(xs[i:i + k]) / k", "new": "sum(xs[i:i + k]) // k"}
+  ]
+}

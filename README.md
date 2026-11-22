@@ -7,6 +7,10 @@ Antigravity CLI (`agy`) işçileri açar, sonuçları kendisi kontrol eder.
 - **Gemini 4 Neon** — önemli işler ve Hydrogen'in çözemedikleri
 - **Claude** — yalnızca işçilerin çözemediği işler
 
+Büyük veya riskli işlerde üç kontrol rolü de devreye girer: code review, güvenlik incelemesi ve
+test yazımı. Hangi modelin hangi rolü aldığı `bench/` klasöründeki ölçüme dayanır; ayrıntı ve
+sonuçlar [bench/README.md](bench/README.md) içinde.
+
 ## Kurulum
 
 Makinede yalnızca Claude Code olması yeterli; gerisini kurulum scripti halleder.
@@ -76,6 +80,7 @@ manager/SKILL.md             Claude'un izlediği talimat
 manager/scripts/orch.py      işçileri açan, izleyen, sonuçları toplayan araç
 manager/scripts/setup.sh     Mac/Linux hazırlık ve kontrol
 manager/scripts/setup.ps1    Windows hazırlık ve kontrol
+bench/                       rol ölçümü: sınavlar, puanlama aracı, sonuçlar
 ```
 
 Çalışma kayıtları `~/.claude/manager-runs/` altında tutulur; silmekte sakınca yoktur.

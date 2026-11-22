@@ -1,0 +1,19 @@
+{
+  "kind": "findings",
+  "items": [
+    {"id": "sqli-login", "function": "login", "pattern": "sql|inject"},
+    {"id": "weak-hash", "function": "hash_password", "pattern": "md5|salt|weak|fast hash|bcrypt|argon|scrypt"},
+    {"id": "jwt-no-verify", "function": "verify_token", "pattern": "signature|verify|forg"},
+    {"id": "idor-invoice", "function": "get_invoice", "pattern": "idor|authoriz|owner|access control|other user|any user|user_id"},
+    {"id": "path-traversal", "function": "download", "pattern": "travers|\\.\\./|arbitrary file|absolute path"},
+    {"id": "cmd-injection", "function": "ping", "pattern": "command|shell|inject|rce"},
+    {"id": "ssrf", "function": "fetch_preview", "pattern": "ssrf|server.side request|internal|metadata"},
+    {"id": "pickle", "function": "load_session", "pattern": "pickle|deserial|rce|code execution", "also": ["prefs"]},
+    {"id": "open-redirect", "function": "redirect_next", "pattern": "redirect"},
+    {"id": "ssti-xss", "function": "greet", "pattern": "ssti|template|xss|cross.site|inject|escap"},
+    {"id": "missing-auth", "function": "admin_delete_user", "pattern": "auth|login_required|admin_required|unauthenticated|anyone|missing"},
+    {"id": "weak-reset-token", "function": "reset_password", "pattern": "random|predict|secrets|csprng|cryptograph|brute|6.digit|six.digit|guess"},
+    {"id": "hardcoded-secret", "function": null, "pattern": "secret_key|hard.?coded|secret key|portal-secret"},
+    {"id": "debug-mode", "function": null, "pattern": "debug"}
+  ]
+}

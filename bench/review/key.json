@@ -1,0 +1,17 @@
+{
+  "kind": "findings",
+  "items": [
+    {"id": "discount-100", "function": "apply_discount", "pattern": "100|inclusive|>=|boundar"},
+    {"id": "paginate-offset", "function": "paginate", "pattern": "1-based|page ?- ?1|offset|first page|skip|start"},
+    {"id": "dedupe-direction", "function": "dedupe_orders", "pattern": "<|great|latest|newest|oldest|earl|invert|revers|wrong"},
+    {"id": "add-tag-mutable", "function": "add_tag", "pattern": "mutable|default|mutat|modif|shared|append"},
+    {"id": "weight-last", "function": "total_weight", "pattern": "last|off.by.one|- ?1|range"},
+    {"id": "reserve-lock", "function": "reserve_stock", "pattern": "lock|release|deadlock"},
+    {"id": "price-float", "function": "parse_price", "pattern": "float|round|precis|truncat"},
+    {"id": "retry-return", "function": "retry", "pattern": "rais|return"},
+    {"id": "expired-default", "function": "is_expired", "pattern": "default|definition|import|once|evaluat"},
+    {"id": "day-utc", "function": "group_by_day", "pattern": "utc|time ?zone|local"},
+    {"id": "split-zero", "function": "split_by_weight", "pattern": "zero"},
+    {"id": "overdue-or", "function": "find_overdue", "pattern": "\\bor\\b|\\band\\b|logic|paid"}
+  ]
+}

@@ -106,6 +106,39 @@ A worker's report is a claim, not evidence. For every finished piece:
 Finish with a short summary for the user: what each worker did, which tier, what you verified and
 how, what you had to escalate or do yourself, and anything not done or not verified.
 
+## Reviewer, security and test roles
+
+Besides the workers that write code, three checking roles exist. They are optional: skip them for
+small changes (a file or two, a few lines) and use them when the diff is large or the area is risky.
+A role's report is still a claim; it narrows what you verify, it does not replace step 5.
+
+**The one rule that matters: the checker is never the model that wrote the code.**
+
+| Role | When | Model (`--model`) | If that model wrote the code |
+|---|---|---|---|
+| Code review | non-trivial diffs | `gemini-4-argon-high` | `gemini-4-hydrogen-high` |
+| Security review | auth, permissions, user input, SQL, file upload/download, payments, secrets, new dependencies | `claude-opus-5-5` | `gemini-4-hydrogen-high` |
+| Test writing | behaviour that has a clear spec | `gemini-4-hydrogen-high` | `gemini-4-argon-high` |
+
+- **Never give a security review to Neon.** Gemini's safety filter blocked it outright in two of two
+  runs ("This request was blocked by Gemini's filters"). Argon and Hydrogen were not blocked.
+- `claude-*` models run on the `claude` CLI (`orch.py check` reports whether it is installed and
+  signed in). If it is missing, run that role as your own subagent on the same model instead.
+  Never run Claude models through `agy`.
+- These picks come from `bench/` in the skill's repository (seeded bugs, seeded vulnerabilities,
+  mutation testing). Re-run it when a new model ships instead of trusting reputation.
+
+How to brief each role:
+
+- **Review** — read-only. Give the diff or file list and the spec. Ask for real bugs only (behaviour
+  that contradicts the spec, crashes, data corruption, concurrency), each with function, line and
+  the input that triggers it, written to a findings file. Fixes go back to the author, not the
+  reviewer.
+- **Security** — read-only. Ask for exploitable vulnerabilities only, each with what the attacker
+  sends and what they gain. A finding without a concrete scenario is discarded.
+- **Tests** — give the spec, not the implementation's reasoning. Tests must pass on the current code
+  and fail if a documented behaviour breaks. Run them yourself before accepting.
+
 ## Known behaviour of agy
 
 - There is no working-directory flag; the helper starts `agy` inside `--cwd` and tells the worker
@@ -114,5 +147,7 @@ how, what you had to escalate or do yourself, and anything not done or not verif
 - Do not pass `--mode auto`: some accounts reject it. The default mode edits files and runs commands
   without prompting. If a worker reports that an action was denied, re-run that piece with
   `--skip-permissions` only after the user agrees, since it auto-approves every tool call.
+- A `claude-*` worker cannot write inside `~/.claude` (Claude Code treats it as protected), so never
+  point `--cwd` at a folder under it.
 - Several `agy` processes run fine in parallel. Plan quotas apply (five-hour and weekly limits);
   if workers start failing with quota errors, stop dispatching and tell the user.

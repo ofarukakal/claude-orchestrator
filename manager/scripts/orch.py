@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -35,11 +36,17 @@ def find_tool(name):
     found = shutil.which(name)
     if found:
         return found
+    local = Path.home() / "AppData" / "Local"
     for folder in (Path.home() / ".local" / "bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin"),
-                   Path.home() / "AppData" / "Local" / "agy" / "bin"):
+                   local / "agy" / "bin", local / "Microsoft" / "WinGet" / "Links"):
         for candidate in (folder / name, folder / (name + ".exe")):
             if candidate.is_file():
                 return str(candidate)
+    # winget installs each tool in its own package folder; a tmux server started earlier never sees it on PATH
+    packages = local / "Microsoft" / "WinGet" / "Packages"
+    if packages.is_dir():
+        for candidate in packages.glob("*/" + name + ".exe"):
+            return str(candidate)
     return None
 
 
@@ -88,6 +95,8 @@ def cmd_check(_):
             print("not signed in, or the plan lacks these models")
             print(stderr.strip()[-400:])
         ok = ok and all(tiers.values())
+    # Optional: only needed for claude-* workers (security review role).
+    print("%-5s %s" % ("claude", find_tool("claude") or "not installed (optional; claude-* workers unavailable)"))
     sys.exit(0 if ok else 1)
 
 
@@ -104,8 +113,9 @@ def cmd_spawn(a):
     d = RUNS / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), a.name))
     d.mkdir(parents=True)
     (d / "task.md").write_text(task, encoding="utf-8")
-    model = "gemini-4-%s-%s" % (a.tier, a.effort)
-    meta = {"name": a.name, "model": model, "cwd": str(cwd), "timeout_min": a.timeout_min,
+    model = a.model or "gemini-4-%s-%s" % (a.tier, a.effort)
+    engine = "claude" if model.startswith("claude") else "agy"
+    meta = {"name": a.name, "model": model, "engine": engine, "cwd": str(cwd), "timeout_min": a.timeout_min,
             "skip_permissions": a.skip_permissions}
     (d / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
@@ -128,6 +138,35 @@ def cmd_spawn(a):
     print("%s -> %s  (%s)" % (a.name, model, d))
 
 
+def read_event(engine, ev):
+    """Echo progress to the pane; return the normalised final result when this event carries it."""
+    if engine == "claude":
+        kind = ev.get("type")
+        if kind == "assistant":
+            for block in ev.get("message", {}).get("content", []):
+                if block.get("type") == "text":
+                    print(block.get("text", ""), flush=True)
+                elif block.get("type") == "tool_use":
+                    print("> %s" % block.get("name"), flush=True)
+        elif kind == "result":
+            u = ev.get("usage") or {}
+            total = sum(u.get(k) or 0 for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                                "cache_creation_input_tokens"))
+            return {"status": "ERROR" if ev.get("is_error") else "SUCCESS", "response": ev.get("result") or "",
+                    "duration_seconds": (ev.get("duration_ms") or 0) / 1000.0, "num_turns": ev.get("num_turns"),
+                    "usage": {"total_tokens": total}, "cost_usd": ev.get("total_cost_usd")}
+        return None
+    if ev.get("event") == "result":
+        return ev.get("result")
+    if ev.get("event") == "step_update":
+        s = ev.get("step_update", {})
+        if s.get("text_delta"):
+            print(s["text_delta"], end="", flush=True)
+        elif s.get("state") == "ACTIVE" and s.get("step_type") != "agent_response":
+            print("\n> %s" % s.get("step_type"), flush=True)
+    return None
+
+
 def cmd_worker(a):
     d = Path(a.run_dir)
     meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
@@ -143,19 +182,31 @@ def cmd_worker(a):
         "End with a short report: what you changed, how you verified it, and anything left undone or uncertain."
     ) % (d / "task.md", cwd)
 
-    agy = find_tool("agy")
+    engine = meta.get("engine", "agy")
+    exe = find_tool(engine)
     status, code, final = "NO_RESULT", -1, None
-    if not agy:
-        status = "AGY_NOT_FOUND"
+    if not exe:
+        status = "%s_NOT_FOUND" % engine.upper()
     else:
-        args = [agy, "-p", prompt, "--model", meta["model"], "--output-format", "stream-json",
-                "--add-dir", str(d), "--print-timeout", "%dm" % meta["timeout_min"]]
+        env = None
+        if engine == "claude":
+            args = [exe, "-p", prompt, "--model", meta["model"], "--output-format", "stream-json", "--verbose",
+                    "--add-dir", str(d), "--permission-mode", "acceptEdits",
+                    "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep"]
+            # A worker started from inside a Claude Code session must not inherit that session's wiring.
+            env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE", "ANTHROPIC"))}
+        else:
+            args = [exe, "-p", prompt, "--model", meta["model"], "--output-format", "stream-json",
+                    "--add-dir", str(d), "--print-timeout", "%dm" % meta["timeout_min"]]
         if meta.get("skip_permissions"):
             args.append("--dangerously-skip-permissions")
         with open(d / "stderr.log", "w", encoding="utf-8") as err, \
                 open(d / "events.ndjson", "w", encoding="utf-8") as events:
-            p = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL,
-                                 text=True, encoding="utf-8", errors="replace")
+            p = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=err,
+                                 stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace")
+            watchdog = threading.Timer(meta["timeout_min"] * 60 + 60, p.kill)
+            watchdog.daemon = True
+            watchdog.start()
             for line in p.stdout:
                 events.write(line)
                 events.flush()
@@ -163,15 +214,9 @@ def cmd_worker(a):
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                if ev.get("event") == "result":
-                    final = ev.get("result")
-                elif ev.get("event") == "step_update":
-                    s = ev.get("step_update", {})
-                    if s.get("text_delta"):
-                        print(s["text_delta"], end="", flush=True)
-                    elif s.get("state") == "ACTIVE" and s.get("step_type") != "agent_response":
-                        print("\n> %s" % s.get("step_type"), flush=True)
+                final = read_event(engine, ev) or final
             code = p.wait()
+            watchdog.cancel()
         if final:
             (d / "result.json").write_text(json.dumps(final, indent=2, ensure_ascii=False), encoding="utf-8")
             status = final.get("status", "UNKNOWN")
@@ -253,6 +298,7 @@ def main():
     s.add_argument("name")
     s.add_argument("--tier", choices=["hydrogen", "neon"], default="hydrogen")
     s.add_argument("--effort", choices=["low", "medium", "high", "xhigh"], default="high")
+    s.add_argument("--model", help="full model id; overrides --tier/--effort. A claude-* id runs on the claude CLI")
     s.add_argument("--cwd", default=".")
     s.add_argument("--task")
     s.add_argument("--task-file")
