@@ -63,3 +63,25 @@ fonksiyonun üstünde açık bir tanım ve birbirinden bağımsız hatalar oldu�
 hepsini buluyor; hatanın gerçek projeden gelmesi bunu değiştirmedi. Modelleri ayırmak için hatanın
 birkaç dosyaya yayıldığı ve yazılı bir tanımın olmadığı koşullar gerekir (ör. gerçek depoda,
 düzeltmeden önceki commit'in incelenmesi).
+
+### Gerçek kod denetimi (depoda yok)
+
+Tek dosyalık sınavlar ayırt etmeyince modeller gerçek bir projenin düzeltme öncesi hâlinde sınandı:
+6.874 satır Python, yazılı tanım yok, en fazla 20 bulgu. Anahtar, sonradan gerçekten düzeltilen 17
+hataydı. Bulguları, hangi modele ait olduklarını bilmeyen bir hakem kodu açarak puanladı. Proje
+özel olduğu için bu sınavın dosyaları depoya konmadı.
+
+| Model | Bulgu | Anahtardan (17) | Anahtar dışı doğrulanmış | Belirsiz | Yanlış | Süre |
+|---|---|---|---|---|---|---|
+| Gemini 4 Neon high | 20 | 4 | 14 | 2 | 0 | 19 dk |
+| Gemini 4 Hydrogen high | 17 | 3 | 9 | 3 | 1 | 8 dk |
+| Claude Haiku 5.5 | 9 | 4 | 6 | 0 | 0 | 10 dk |
+| Claude Opus 5.5 | 10 | 1 | 6 | 3 | 0 | 8 dk |
+| Claude Sonnet 5.5 | 6 | 1 | 4 | 1 | 0 | 8 dk |
+| Gemini 4 Argon high | 0, sonra 20 | puanlanmadı | | | | 19 dk, 18 dk |
+
+- Bu sınav modelleri ayırdı: Neon en çok gerçek hatayı buldu, Hydrogen yarı sürede ikinci oldu.
+- Kimse anahtarın çoğunu bulamadı (en fazla 4/17); buna karşılık anahtar dışı bulguların çoğu gerçekti.
+  Doğrulanan 19 ayrı hatadan 12'si projenin güncel kodunda hâlâ duruyordu.
+- Argon ilk denemede kendi alt ajanlarını başlatıp sonuç beklerken bitti ve hiçbir şey yazmadı.
+- Tek koşu ve tek hakem; hakem bir Claude alt ajanıydı.

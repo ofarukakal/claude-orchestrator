@@ -116,10 +116,18 @@ A role's report is still a claim; it narrows what you verify, it does not replac
 
 | Role | When | Model (`--model`) | If that model wrote the code |
 |---|---|---|---|
-| Code review | non-trivial diffs | `gemini-4-argon-high` | `gemini-4-hydrogen-high` |
+| Code review | non-trivial diffs | `gemini-4-neon-high` | `gemini-4-hydrogen-high` |
 | Security review | auth, permissions, user input, SQL, file upload/download, payments, secrets, new dependencies | `claude-opus-5-5` | `gemini-4-hydrogen-high` |
-| Test writing | behaviour that has a clear spec | `gemini-4-hydrogen-high` | `gemini-4-argon-high` |
+| Test writing | behaviour that has a clear spec | `gemini-4-hydrogen-high` | `gemini-4-neon-high` |
 
+- **Review picks come from a real-code audit** (6,900 lines, no spec, blind-judged): Neon reported the
+  most confirmed bugs (18, none wrong) but took about 19 minutes; Hydrogen reported 12 in 8 minutes.
+  Use Hydrogen as the reviewer when time matters more than depth.
+- **Do not rely on Argon for large tasks.** In one of two runs it started its own subagents, ended
+  its turn "waiting for results" and produced nothing after 19 minutes.
+- **When the Google quota runs out** (`RESOURCE_EXHAUSTED`, "Individual quota reached"), do not
+  retry: move the checking roles to `claude-opus-5-5` (risky code) or `claude-sonnet-5-5` and tell
+  the user when the quota resets. Authoring work waits for the reset unless the user says otherwise.
 - **Never give a security review to Neon.** Gemini's safety filter blocked it outright in two of two
   runs ("This request was blocked by Gemini's filters"). Argon and Hydrogen were not blocked.
 - `claude-*` models run on the `claude` CLI (`orch.py check` reports whether it is installed and
