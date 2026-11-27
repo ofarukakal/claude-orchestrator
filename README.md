@@ -1,10 +1,10 @@
-# Manager skill — Claude Code için Antigravity işçi düzeni
+# Manager skill — Claude Code için Antigravity ajan ekibi
 
 Claude Code'a "manager ol" dediğinde Claude işi kendisi yazmaz: parçalara böler, tmux'ta
-Antigravity CLI (`agy`) işçileri açar, sonuçları kendisi kontrol eder.
+Antigravity CLI (`agy`) ajanları açar, sonuçları kendisi kontrol eder.
 
 Claude patrondur: işi böler, görevleri yazar, dönen her değişikliği kendisi okur ve testleri
-çalıştırır. Kodu yalnızca işçiler çözemediğinde yazar.
+çalıştırır. Kodu yalnızca ajanlar çözemediğinde yazar.
 
 | İş | Kim yapar |
 |---|---|
@@ -14,7 +14,7 @@ Claude patrondur: işi böler, görevleri yazar, dönen her değişikliği kendi
 | Neon'un yazdığının review'u | Claude Opus 5.5 |
 | Güvenlik incelemesi | Claude Opus 5.5 (Neon'a verilmez: Gemini filtresi engelliyor) |
 | Test yazımı | Gemini 4 Hydrogen |
-| İşçilerin çözemediği işler | Claude (yönetici) |
+| Ajanların çözemediği işler | Claude |
 
 Yazan model kendi işini incelemez. Bu dağılım itibara değil `bench/` klasöründeki ölçümlere
 dayanır; sınavlar ve sonuçlar [bench/README.md](bench/README.md) içinde. Google kotası dolunca
@@ -50,14 +50,14 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ## Kurulum scripti ne yapar
 
 1. Skill'i `~/.claude/skills/manager` altına kopyalar ve denetim hook'unu
-   `~/.claude/settings.json` dosyasına ekler (aşağıda "Yöneticinin denetimi").
+   `~/.claude/settings.json` dosyasına ekler (aşağıda "Claude'un denetimi").
 2. Eksikleri kurar:
    - **tmux** — Mac'te Homebrew ile, Windows'ta winget ile `psmux` (tmux karşılığı)
    - **Python 3** — Mac'te Homebrew ile, Windows'ta winget ile
    - **Antigravity CLI (`agy`)** — Google'ın resmi kurulum scripti (Mac/Linux) veya winget (Windows)
 3. Google hesabının Hydrogen ve Neon'u görüp görmediğini kontrol eder.
 4. İsteğe bağlı iki aracı da kurar ve durumlarını `[opt]` satırıyla bildirir:
-   - **Claude Code CLI (`claude`)** — Opus gibi Claude modellerini işçi olarak çalıştırmak için
+   - **Claude Code CLI (`claude`)** — Opus gibi Claude modellerini ajan olarak çalıştırmak için
    - **GitHub CLI (`gh`)** — pull request açmak ve birleştirmek için
 
    Bunlar eksik olsa da kurulum "hazır" sayılır; yalnızca ilgili işler yapılamaz.
@@ -96,15 +96,15 @@ Script bunları senin yerine yapamaz; gerektiğinde `[you]` satırıyla söyler:
 
 Claude Code'u projende aç ve şunlardan birini söyle:
 
-- "manager ol, şu işi işçilere dağıt: …"
+- "ekibi topla, şu işi ajanlara dağıt: …"
 - "tmux aç, 3 Hydrogen ile şunları yaptır: …"
 
-Bir işin tipik akışı: Claude işi dosyalara göre böler (iki işçi aynı dosyaya dokunmaz), görevleri
-yazar, işçileri paralel çalıştırır, farkları okur, testleri çalıştırır, önemli değişiklikleri başka
+Bir işin tipik akışı: Claude işi dosyalara göre böler (iki ajan aynı dosyaya dokunmaz), görevleri
+yazar, ajanları paralel çalıştırır, farkları okur, testleri çalıştırır, önemli değişiklikleri başka
 bir modele inceletir ve sana ne yapıldığını, neyin doğrulandığını ve neyin eksik kaldığını raporlar.
 Commit, push, pull request ve birleştirme yalnızca sen isteyince yapılır.
 
-İşçileri canlı izlemek için ayrı bir terminalde:
+Ajanları canlı izlemek için ayrı bir terminalde:
 
 ```bash
 tmux attach -t orch
@@ -115,24 +115,24 @@ tmux attach -t orch
 ```
 install.sh / install.ps1     kurulum
 manager/SKILL.md             Claude'un izlediği talimat
-manager/scripts/orch.py      işçileri açan, izleyen, sonuçları toplayan araç
+manager/scripts/orch.py      ajanları açan, izleyen, sonuçları toplayan araç
 manager/scripts/setup.sh     Mac/Linux hazırlık ve kontrol
 manager/scripts/setup.ps1    Windows hazırlık ve kontrol
 bench/                       rol ölçümü: sınavlar, puanlama aracı, sonuçlar
 ```
 
-## Yöneticinin denetimi
+## Claude'un denetimi
 
-İşçileri yönetici (Claude) denetler; yöneticiyi de araç ve başka aileden bir model denetler. Git
+Ajanları Claude denetler; Claude'u de araç ve başka aileden bir model denetler. Git
 deposunda yapılan her iş bir **iş kaydı** içinde yürür:
 
 1. **İstek kaydı:** iş başlarken senin isteğin kelimesi kelimesine kaydedilir, depo durumu
-   sabitlenir. İş kaydı olmadan işçi açılamaz.
-2. **Kanıt:** test, build gibi kanıt komutlarını yönetici değil araç çalıştırır; çıkış kodu ve çıktı
+   sabitlenir. İş kaydı olmadan ajan açılamaz.
+2. **Kanıt:** test, build gibi kanıt komutlarını Claude değil araç çalıştırır; çıkış kodu ve çıktı
    kayda geçer.
-3. **Denetçi:** iş bitince salt okunur bir Gemini 4 Neon işçisi isteği, yöneticinin raporunu,
+3. **Denetçi:** iş bitince salt okunur bir Gemini 4 Neon ajanı isteği, Claude'un raporunu,
    gerçek diff'i ve kanıt kaydını karşılaştırır: raporda olup yapılmayan, istenip eksik kalan,
-   yapılıp raporlanmayan, istenmeden yapılan. Yöneticinin kendi yazdığı dosyaları ayrıca kod
+   yapılıp raporlanmayan, istenmeden yapılan. Claude'un kendi yazdığı dosyaları ayrıca kod
    olarak inceler. Çıktısı sana özetlenmeden gösterilir ve `VERDICT: PASS` ya da `FAIL` ile biter.
 4. **Kapı:** kurulumla gelen hook, iş kaydı açıkken ve denetim geçmemişken Claude'un
    `git commit` ve `git push` komutlarını durdurur. Dosyalar denetimden sonra değişirse kanıt ve
@@ -144,7 +144,7 @@ Denetimi geçmeyen bir işi yalnızca sen sonlandırabilirsin; kendi terminalind
 python3 ~/.claude/skills/manager/scripts/orch.py job abandon --reason "neden"
 ```
 
-Hook yalnızca açık bir yönetici işi olan depoda ve o işi başlatan oturumda devreye girer; diğer
+Hook yalnızca açık bir ekip işi olan depoda ve o işi başlatan oturumda devreye girer; diğer
 oturumlara ve normal commit'lere dokunmaz. 12 saatten eski açık işler kapıyı tutmaz.
 `~/.claude/settings.json` dosyasına yazılır (ilk değişiklikten önce yanına bir yedek bırakılır).
 Kaldırmak için:
@@ -158,21 +158,21 @@ kayıt dosyalarını elle değiştiren birini durdurmaz.
 
 ## Denetimler
 
-- **Değişiklik denetimi:** her işçi başlamadan önce git çalışma ağacının durumu kaydedilir, bitince
-  karşılaştırılır. İşçi izin verilen yolların (`--allow`) dışına yazdıysa, commit attıysa, branch
+- **Değişiklik denetimi:** her ajan başlamadan önce git çalışma ağacının durumu kaydedilir, bitince
+  karşılaştırılır. Ajan izin verilen yolların (`--allow`) dışına yazdıysa, commit attıysa, branch
   değiştirdiyse ya da stash'e dokunduysa sonuçta `CHECK FAILED` satırı çıkar. Denetim engellemez,
   raporlar; depo dışına ve git'in yok saydığı dosyalara yazılanı göremez.
-- **Salt okunur roller:** review ve güvenlik işçileri `--read-only` ile açılır. Claude işçisinde
-  yazma araçları kapalıdır; Gemini işçisinde yazmama talimatı verilir ve yaptığı her değişiklik
+- **Salt okunur roller:** review ve güvenlik ajanları `--read-only` ile açılır. Claude ajanında
+  yazma araçları kapalıdır; Gemini ajanında yazmama talimatı verilir ve yaptığı her değişiklik
   denetimde hata olarak görünür.
 - **Sandbox profili:** Google Cloud girişli hesaplarda başsız `agy` kabuk komutlarını reddeder.
-  Araç bunu küçük bir yoklamayla anlar ve işçileri terminal sandbox'ında çalıştırır: okuma
-  komutları onaysız çalışır, dosyalar işçinin dosya aracıyla yazılır, yalnızca `--run` ile adı
+  Araç bunu küçük bir yoklamayla anlar ve ajanları terminal sandbox'ında çalıştırır: okuma
+  komutları onaysız çalışır, dosyalar ajanın dosya aracıyla yazılır, yalnızca `--run` ile adı
   verilen komutlar (test, build) sandbox dışına çıkar. Antigravity uygulamasındaki izin ayarın
   değişmez.
 - **Carbon:** `--tier carbon`, Google Cloud girişiyle görünür. `bench/` ile ölçülene kadar
   denetim rolü verilmez.
-- **Durumlar:** izin reddiyle boş dönen işçi `DENIED`, kota bitince `QUOTA`, süre dolunca `TIMEOUT`, işçinin tmux penceresi kapanınca
+- **Durumlar:** izin reddiyle boş dönen ajan `DENIED`, kota bitince `QUOTA`, süre dolunca `TIMEOUT`, ajanın tmux penceresi kapanınca
   `LOST` yazılır.
 
 Çalışma kayıtları `~/.claude/manager-runs/` altında tutulur ve proje kodunu içerir. Eskileri

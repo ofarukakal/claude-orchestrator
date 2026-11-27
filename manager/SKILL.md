@@ -1,13 +1,13 @@
 ---
 name: manager
-description: Act as a manager/orchestrator that delegates coding work to Google Antigravity CLI (agy) workers running in tmux — Gemini 4 Hydrogen for normal tasks, Gemini 4 Neon for important ones — then verifies their output and takes over only what they cannot solve. Use when the user says "manager ol", "orchestrator ol", "be the manager", "işçilere dağıt", "tmux aç", "antigravity'e yaptır", "hydrogen/neon kullan", or otherwise asks to delegate work to Gemini/Antigravity workers instead of doing it directly.
+description: Coordinate a team of agents instead of writing the code yourself - delegate coding work to Google Antigravity CLI (agy) agents running in tmux (Gemini 4 Hydrogen for normal tasks, Gemini 4 Neon for important ones), verify their output and take over only what they cannot solve. Use when the user says "ekibi topla", "ekibe dağıt", "ajanlara dağıt", "manager ol", "orchestrator ol", "tmux aç", "antigravity'e yaptır", "hydrogen/neon kullan", or otherwise asks to delegate work to Gemini/Antigravity agents instead of doing it directly.
 ---
 
-# Manager: orchestrate Antigravity workers
+# Team: coordinate Antigravity agents
 
-You are the manager. You do not write the code yourself. You split the work, hand each piece to an
-`agy` worker in its own tmux window, check what comes back, and step in personally only when the
-workers cannot get it right. Talk to the user in their language.
+You coordinate a team of agents. You do not write the code yourself. You split the work, hand each piece to an
+`agy` agent in its own tmux window, check what comes back, and step in personally only when the
+agents cannot get it right. Talk to the user in their language.
 
 The helper is `scripts/orch.py` in this skill's folder (Python 3, standard library only). Call it
 with the absolute path, using `python` on Windows and `python3` on macOS/Linux.
@@ -23,7 +23,7 @@ Run the setup script in check mode. It changes nothing and reports each requirem
 It needs no Python itself, so it works on a machine that has nothing but Claude Code. It checks
 Python 3, tmux (psmux on Windows), the Antigravity CLI `agy`, and that the signed-in account can see
 Gemini 4 Hydrogen and Neon.
-It also reports two optional tools as `[opt]`: the `claude` CLI (needed for Claude-model workers
+It also reports two optional tools as `[opt]`: the `claude` CLI (needed for Claude-model agents
 such as the Opus reviewer) and the GitHub CLI `gh` (needed for pull requests). Missing optional
 tools do not block the work.
 
@@ -40,14 +40,26 @@ tools do not block the work.
 After an install, re-run the check until it says ready. A freshly installed tool may not be on PATH
 in the current shell; the helper also looks in `~/.local/bin` and the Homebrew folders.
 
+## Do what was asked, then stop
+
+- Build what the request needs and what it cannot work without. Nothing else: no extra features,
+  options, abstractions, refactors or tests that nobody asked for. The number of pieces follows
+  from the request, not from how many agents can run.
+- Anything else you or an agent think would be good is not built. It goes in the report as one
+  line under "suggestions".
+- Say this in every task file, so the agents hold to it too.
+- An auditor's NOT ASKED FOR finding is closed by removing the change, not by improving it.
+- Two audit rounds at most. If the second still fails, stop fixing and bring what is left to the
+  user.
+
 ## You are audited too
 
-Workers are checked by you; you are checked by the helper and by a model of another family. In a
-git repository every manager task runs inside a **job**:
+Agents are checked by you; you are checked by the helper and by a model of another family. In a
+git repository every team task runs inside a **job**:
 
 1. `orch.py job start --cwd DIR --request-file FILE` before anything else. The file holds the
    user's request **word for word**, copied from their messages, not your summary of them (several
-   messages: all of them, in order). `spawn` refuses to start a worker without an open job.
+   messages: all of them, in order). `spawn` refuses to start an agent without an open job.
 2. Do the work (sections 2 to 6).
 3. `orch.py job verify --cwd DIR -- <proving command>` for each command that proves the work
    (tests, build, type-check). The helper runs it and records the exit code and output; a command
@@ -56,14 +68,15 @@ git repository every manager task runs inside a **job**:
 4. Write the report you intend to give the user into a file, then
    `orch.py job audit --cwd DIR --report-file FILE` and `orch.py wait <the name it prints>`. The
    auditor (Gemini 4 Neon, read-only) gets the request, your report, the real diff since the job
-   started, the verification record and the workers' check results, and compares them: claimed but
+   started, the verification record and the agents' check results, and compares them: claimed but
    not done, asked but missing, done but not reported, not asked for. Files you wrote or edited
    yourself are listed for it to review as code, because nobody else has read them.
 5. `orch.py job show --cwd DIR`, and give the user its output **unedited and in full** before your
    own summary. Do not paraphrase it, trim it or answer it in place of showing it.
-6. `VERDICT: FAIL`: fix what it found (through a worker where possible), then verify and audit
+6. `VERDICT: FAIL`: fix what it found (through an agent where possible), then verify and audit
    again. Any file change after a verification or an audit makes it stale. If you think a finding
    is wrong, show it to the user anyway and say why; the user decides.
+   Two rounds at most (see above).
 7. `orch.py job close --cwd DIR` once the gate is open.
 
 A hook installed with the skill refuses `git commit` and `git push` from this session while the job
@@ -80,9 +93,9 @@ tell the user the auditor was of your own family.
 ## 2. Plan the split
 
 - Break the request into pieces that can each be described completely in a task file.
-- **Two workers must never edit the same files at the same time.** Run independent pieces in
+- **Two agents must never edit the same files at the same time.** Run independent pieces in
   parallel (3–5 at once is fine); run pieces that touch the same files one after another. When in
-  doubt, sequence them. In a git repo, parallel workers on overlapping areas each get their own
+  doubt, sequence them. In a git repo, parallel agents on overlapping areas each get their own
   `git worktree`.
 - Choose the tier per piece:
   - **hydrogen** (default) — ordinary work: well-specified features, bug fixes, tests, refactors,
@@ -100,7 +113,7 @@ tell the user the auditor was of your own family.
 
 ## 3. Write task files that stand on their own
 
-A worker knows nothing about this conversation. Each task file must contain:
+An agent knows nothing about this conversation. Each task file must contain:
 
 - the goal and why it matters, in a sentence or two;
 - the exact files or area to work in, and what must not be touched;
@@ -110,7 +123,7 @@ A worker knows nothing about this conversation. Each task file must contain:
 
 Write the task to a temporary file and pass `--task-file`; short tasks can use `--task`.
 
-Every task file for work in an existing project also carries these rules, because workers follow
+Every task file for work in an existing project also carries these rules, because agents follow
 them only when they are written down:
 
 - Edit only the files the task lists; name the files that must not be touched (shared test files,
@@ -124,7 +137,7 @@ them only when they are written down:
   decision made and why, and one concrete test scenario with inputs and the expected result.
 
 When one piece needs judgement (for example "choose the smallest safe fix"), say which invariants
-must hold and ask the worker to list the alternatives it rejected and every reader of the data it
+must hold and ask the agent to list the alternatives it rejected and every reader of the data it
 touched. That report is what you verify against.
 
 ## 4. Dispatch and wait
@@ -137,30 +150,30 @@ orch.py result api-fix auth-redesign
 ```
 
 - **Always pass `--allow`** for work in a git repository: one per file, folder or glob (relative to
-  `--cwd`) the task lets the worker change. The helper records the working tree before the worker
-  starts and compares it afterwards; it does not stop a worker from writing elsewhere, it tells you
+  `--cwd`) the task lets the agent change. The helper records the working tree before the agent
+  starts and compares it afterwards; it does not stop an agent from writing elsewhere, it tells you
   that it did.
-- **Pass `--run "<command>"`** for every command the worker must run that writes files or needs the
+- **Pass `--run "<command>"`** for every command the agent must run that writes files or needs the
   network: the proving command above all (`--run "npm test"`, `--run "python3 -m pytest"`), builds,
-  installs. On accounts where headless `agy` refuses shell commands, the helper runs the worker in
+  installs. On accounts where headless `agy` refuses shell commands, the helper runs the agent in
   the terminal sandbox: reading and searching commands run unprompted, files are written with the
-  worker's file tools, and only the `--run` prefixes may leave the sandbox. A worker that needs a
+  agent's file tools, and only the `--run` prefixes may leave the sandbox. An agent that needs a
   command you did not name stops and ends `DENIED`; add the `--run` and start it again. Give the
   narrowest prefix that works, never a bare interpreter or shell (`--run python3`, `--run bash`).
-- **Pass `--read-only`** for review and security roles instead of `--allow`. A `claude-*` worker
+- **Pass `--read-only`** for review and security roles instead of `--allow`. A `claude-*` agent
   then has no write tools and no connectors (only reading, searching and
   `git diff/log/show/status/blame`);
-  an `agy` worker is told not to write and any change it makes is reported.
+  an `agy` agent is told not to write and any change it makes is reported.
 
-- Names: letters, digits and dashes. Each worker gets a tmux window of that name in session `orch`.
-- `wait` blocks until the named workers finish or the timeout passes; call it again for long tasks
+- Names: letters, digits and dashes. Each agent gets a tmux window of that name in session `orch`.
+- `wait` blocks until the named agents finish or the timeout passes; call it again for long tasks
   (keep each call under the shell tool's own time limit). Do not poll in a tight loop.
-- `status` lists every run, `peek NAME` shows a worker's live screen, `kill NAME` stops one,
+- `status` lists every run, `peek NAME` shows an agent's live screen, `kill NAME` stops one,
   `down` closes the whole session when the job is finished.
-- A finished worker's state is one of: `SUCCESS`; `ERROR` or `NO_RESULT` (read `stderr.log`);
+- A finished agent's state is one of: `SUCCESS`; `ERROR` or `NO_RESULT` (read `stderr.log`);
   `QUOTA` (the Google quota ran out); `TIMEOUT` (it ran past `--timeout-min` and was stopped);
   `LOST` (its tmux window closed before it finished); `CRASHED` (the helper itself failed);
-  `KILLED`; `DENIED` (headless mode refused a tool the worker needed and it produced nothing). Any
+  `KILLED`; `DENIED` (headless mode refused a tool the agent needed and it produced nothing). Any
   of these can be followed by `| CHECK: ...`, which means the change check failed, or by
   `| DENIED: ...`, which names tools that were refused along the way.
 - The user can watch with `tmux attach -t orch`; mention this once.
@@ -168,14 +181,14 @@ orch.py result api-fix auth-redesign
   change check). They hold project code; `orch.py prune` removes those older than 14 days
   (`--days N`, `--dry-run` to list first). Run it when a job is finished.
 
-## 5. Verify — never trust a worker's report
+## 5. Verify — never trust an agent's report
 
-A worker's report is a claim, not evidence. `orch.py result` prints the change check under each
-report: the files that changed while the worker ran, a `!` on those outside `--allow`, and a
-`CHECK FAILED` line when the worker moved `HEAD`, switched branch, touched the stash, wrote outside
+An agent's report is a claim, not evidence. `orch.py result` prints the change check under each
+report: the files that changed while the agent ran, a `!` on those outside `--allow`, and a
+`CHECK FAILED` line when the agent moved `HEAD`, switched branch, touched the stash, wrote outside
 `--allow` or wrote at all in `--read-only`. A failed check is a finding to act on (undo it or keep it
 deliberately, and tell the user), never something to pass over. It compares the working tree only:
-it cannot see files written outside the repository or ignored by git, and when two workers shared a
+it cannot see files written outside the repository or ignored by git, and when two agents shared a
 directory it says so because it cannot tell their edits apart. A passed check does not replace the
 steps below. For every finished piece:
 
@@ -186,10 +199,10 @@ steps below. For every finished piece:
    no stubbed-out logic, no files written outside the project.
 
 Compiling and unit tests do not execute SQL. When a change touches queries and the project has
-end-to-end tests with a database that is already running, run them yourself after the workers
-finish (never let workers run them), and say in your report if you could not.
+end-to-end tests with a database that is already running, run them yourself after the agents
+finish (never let agents run them), and say in your report if you could not.
 
-Workers add things you did not ask for. Read the diff for changes outside the brief even when the
+Agents add things you did not ask for. Read the diff for changes outside the brief even when the
 result looks right; decide whether to keep or undo each one and tell the user.
 
 ## 6. Escalate
@@ -199,22 +212,22 @@ result looks right; decide whether to keep or undo each one and tell the user.
 - **Neon fell short**, or the problem needs judgement across the whole codebase → do it yourself.
   This is the only time you write the code.
 - `QUOTA`: do not retry; see the quota rule under the roles below. `TIMEOUT`: the piece was too big
-  or the worker hung; look at what it wrote, then split the task or raise `--timeout-min`. `LOST`:
+  or the agent hung; look at what it wrote, then split the task or raise `--timeout-min`. `LOST`:
   start it again.
-- A worker that ends with `NO_RESULT`, `ERROR` or `CRASHED`: read `stderr.log` in its run folder
+- An agent that ends with `NO_RESULT`, `ERROR` or `CRASHED`: read `stderr.log` in its run folder
   before retrying. Authentication and quota errors are not fixed by retrying — report them.
 
 ## 7. Report
 
-Finish with a short summary for the user: what each worker did, which tier, what you verified and
+Finish with a short summary for the user: what each agent did, which tier, what you verified and
 how, what you had to escalate or do yourself, and anything not done or not verified. This is the
 report that goes through `job audit`; the user gets the output of `job show` first and your summary
 after it.
 
 ## Git and pull requests
 
-- In a git repository, put the work on its own branch before the first worker starts (ask the user
-  for the branch if they have not named one). Workers edit the working tree; they never commit.
+- In a git repository, put the work on its own branch before the first agent starts (ask the user
+  for the branch if they have not named one). Agents edit the working tree; they never commit.
 - Commit, push, open a pull request and merge only when the user asks, each on its own request.
   While a job is open the hook refuses commit and push until the work is verified and audited on
   the files as they are now; a refusal names what is missing.
@@ -231,7 +244,7 @@ after it.
 
 ## Reviewer, security and test roles
 
-Besides the workers that write code, three checking roles exist. They are optional: skip them for
+Besides the agents that write code, three checking roles exist. They are optional: skip them for
 small changes (a file or two, a few lines) and use them when the diff is large or the area is risky.
 A role's report is still a claim; it narrows what you verify, it does not replace step 5.
 
@@ -247,7 +260,7 @@ A role's report is still a claim; it narrows what you verify, it does not replac
   most confirmed bugs (18, none wrong) but took about 19 minutes; Hydrogen reported 12 in 8 minutes.
   Use Hydrogen as the reviewer when time matters more than depth.
 - **Neon's own work is reviewed by Opus**, in a fresh context that sees only the diff and the
-  intent (a `claude-opus-5-5` worker, or your own subagent on that model), not by you from
+  intent (a `claude-opus-5-5` agent, or your own subagent on that model), not by you from
   memory of the task you wrote. Measured on Neon-written code with seven advanced defects seeded
   in: Opus and Fable both found all seven with no false alarms, so the cheaper one is used. Use
   `claude-fable-5-2` instead only when the user asks for it.
@@ -279,26 +292,26 @@ How to brief each role:
 
 ## Known behaviour of agy
 
-- There is no working-directory flag; the helper starts `agy` inside `--cwd` and tells the worker
+- There is no working-directory flag; the helper starts `agy` inside `--cwd` and tells the agent
   its project directory explicitly.
 - Headless runs use `agy -p … --output-format stream-json`; the last event carries the result.
 - Do not pass `--mode auto`: some accounts reject it. The default mode edits files and runs commands
-  without prompting. If a worker reports that an action was denied, re-run that piece with
+  without prompting. If an agent reports that an action was denied, re-run that piece with
   `--skip-permissions` only after the user agrees, since it auto-approves every tool call.
 - The Antigravity desktop app shares its settings with `agy`, and a Google Cloud (business) sign-in
   has no auto mode: headless shell commands are then refused outright. The helper detects this with
-  one small probe (remembered until `agy` or its settings change) and switches workers to the
+  one small probe (remembered until `agy` or its settings change) and switches agents to the
   sandbox profile described under `--run`; `--sandbox on|off` overrides the detection. Under that
-  profile a read-only `agy` worker cannot write at all. The user's own preset is never changed, and
+  profile a read-only `agy` agent cannot write at all. The user's own preset is never changed, and
   `--skip-permissions` stays a last resort that needs the user's agreement.
-- A `claude-*` worker cannot write inside `~/.claude` (Claude Code treats it as protected), so never
+- A `claude-*` agent cannot write inside `~/.claude` (Claude Code treats it as protected), so never
   point `--cwd` at a folder under it.
-- The tmux session can end on its own and take every worker in it with it (seen once with six
-  workers on psmux, cause unknown). `orch.py wait` then reports those workers as `LOST`; start
-  them again. The same happens when a single worker's window closes on its own.
+- The tmux session can end on its own and take every agent in it with it (seen once with six
+  agents on psmux, cause unknown). `orch.py wait` then reports those agents as `LOST`; start
+  them again. The same happens when a single agent's window closes on its own.
 - Heavy use empties the Google quota within one working session: a run that kept Neon busy hit the
   limit twice in a few hours, each time with a reset one to two hours away. Give bulk work to
-  Hydrogen, keep Neon for what needs it, and when a worker stops with `RESOURCE_EXHAUSTED` keep what
+  Hydrogen, keep Neon for what needs it, and when an agent stops with `RESOURCE_EXHAUSTED` keep what
   it already wrote (the files are usually complete) instead of starting over.
 - Several `agy` processes run fine in parallel. Plan quotas apply (five-hour and weekly limits);
-  if workers start failing with quota errors, stop dispatching and tell the user.
+  if agents start failing with quota errors, stop dispatching and tell the user.

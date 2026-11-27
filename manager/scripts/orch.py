@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Antigravity CLI (agy) workers in tmux windows and collect their results.
+"""Run Antigravity CLI (agy) agents in tmux windows and collect their results.
 
 Works the same on Windows (psmux provides `tmux`) and macOS/Linux (real tmux).
 Standard library only.
@@ -16,7 +16,7 @@ Standard library only.
   orch.py prune  [--days 14] [--dry-run]
   orch.py version
 
-A job records the user's request, runs the proving commands itself and has the manager's report
+A job records the user's request, runs the proving commands itself and has the coordinating agent's report
 audited by a model of another family. The hook refuses `git commit` and `git push` until it passes.
 
   orch.py job start   --cwd DIR (--request TEXT | --request-file FILE)
@@ -52,7 +52,7 @@ AUDIT_MODEL = "gemini-4-neon-high"
 SETTINGS = Path.home() / ".claude" / "settings.json"
 IS_WIN = os.name == "nt"
 QUOTA_MARKS = ("resource_exhausted", "quota reached", "quota exceeded")
-# What a read-only Claude worker may run in a shell; everything else is refused.
+# What a read-only Claude agent may run in a shell; everything else is refused.
 READ_ONLY_SHELL = ("git diff", "git log", "git show", "git status", "git blame", "git ls-files")
 
 
@@ -97,7 +97,7 @@ def live_windows():
 def run_dir(name):
     dirs = sorted(RUNS.glob("*_" + name), reverse=True)
     if not dirs:
-        sys.exit("no such worker: " + name)
+        sys.exit("no such agent: " + name)
     return dirs[0]
 
 
@@ -117,7 +117,7 @@ def read_json(f):
         return {}
 
 
-# --- change check: what a worker did to the git working tree -----------------------------------
+# --- change check: what an agent did to the git working tree -----------------------------------
 
 def git(cwd, *args, env=None):
     exe = find_tool("git")
@@ -173,7 +173,7 @@ def is_allowed(rel_to_top, top, cwd, patterns):
 
 
 def overlapping_workers(d, cwd, started):
-    """Other workers that ran in the same directory while this one did; their edits look like this one's."""
+    """Other agents that ran in the same directory while this one did; their edits look like this one's."""
     names = []
     for other in RUNS.glob("*_*"):
         if other == d or read_json(other / "meta.json").get("cwd") != cwd:
@@ -188,7 +188,7 @@ def overlapping_workers(d, cwd, started):
 
 
 def change_check(before, meta, d, started):
-    """Compare the working tree with the snapshot taken before the worker started."""
+    """Compare the working tree with the snapshot taken before the agent started."""
     cwd = meta["cwd"]
     after = snapshot(cwd)
     if before is None or after is None:
@@ -206,12 +206,12 @@ def change_check(before, meta, d, started):
     if meta.get("read_only"):
         outside = changed
         if outside:
-            problems.append("%d file(s) changed by a read-only worker" % len(outside))
+            problems.append("%d file(s) changed by a read-only agent" % len(outside))
     elif meta.get("allow"):
         outside = [p for p in changed if not is_allowed(p, after["top"], cwd, meta["allow"])]
         if outside:
             problems.append("%d file(s) changed outside --allow" % len(outside))
-    # What each changed file looked like when this worker finished: a later edit by anyone else shows.
+    # What each changed file looked like when this agent finished: a later edit by anyone else shows.
     digests = {p: file_digest(Path(after["top"]) / p) for p in changed}
     return {"git": True, "changed": changed, "outside": outside, "problems": problems, "digests": digests,
             "shared_with": overlapping_workers(d, cwd, started)}
@@ -285,8 +285,8 @@ def cmd_check(_):
         # Optional tier: listed for accounts signed in with a Google Cloud project.
         carbon = re.findall(r"^(gemini-4-carbon-\w+)", stdout, re.M)
         print("%-8s %s" % ("carbon", ", ".join(carbon) if carbon else "not available (optional)"))
-    # Optional: only needed for claude-* workers (security review role).
-    print("%-5s %s" % ("claude", find_tool("claude") or "not installed (optional; claude-* workers unavailable)"))
+    # Optional: only needed for claude-* agents (security review role).
+    print("%-5s %s" % ("claude", find_tool("claude") or "not installed (optional; claude-* agents unavailable)"))
     sys.exit(0 if ok else 1)
 
 
@@ -317,8 +317,8 @@ def cmd_spawn(a):
 
 def start_worker(name, model, cwd, task, timeout_min, read_only=False, allow=None, skip_permissions=False,
                  job=None, audit=False, files=None, run=None, sandbox="auto"):
-    """Create the run folder and open the worker's tmux window. `{RUN_DIR}` in the task and the extra
-    files is replaced by the run folder, the one place besides the project a worker can read."""
+    """Create the run folder and open the agent's tmux window. `{RUN_DIR}` in the task and the extra
+    files is replaced by the run folder, the one place besides the project an agent can read."""
     d = RUNS / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), name))
     d.mkdir(parents=True)
     for fname, text in (files or {}).items():
@@ -380,7 +380,7 @@ def read_event(engine, ev):
 
 
 def stop_tree(p):
-    """Stop the worker and everything it started; a surviving child would keep its output pipe open."""
+    """Stop the agent and everything it started; a surviving child would keep its output pipe open."""
     if IS_WIN:
         p.kill()
         return
@@ -407,7 +407,7 @@ def run_worker(d):
     read_only, allow = meta.get("read_only"), meta.get("allow") or []
     print("[%s] model=%s cwd=%s%s" % (name, meta["model"], cwd, " read-only" if read_only else ""), flush=True)
 
-    # The task is read from a file by the worker itself, so quoting never matters.
+    # The task is read from a file by the agent itself, so quoting never matters.
     prompt = (
         "Read the task file at %s and carry it out completely. "
         "Your project directory is %s - create and edit files only there, and run commands from there. "
@@ -457,17 +457,17 @@ def run_worker(d):
                          "--strict-mcp-config"]
             else:
                 args += ["--permission-mode", "acceptEdits", "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep"]
-            # A worker started from inside a Claude Code session must not inherit that session's wiring.
+            # An agent started from inside a Claude Code session must not inherit that session's wiring.
             env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE", "ANTHROPIC"))}
         else:
             # agy has no switch that removes its write tools; outside the sandbox profile a read-only
-            # agy worker is held to the instruction above and to the change check below.
+            # agy agent is held to the instruction above and to the change check below.
             args = [exe, "-p", prompt, "--model", meta["model"], "--output-format", "stream-json",
                     "--add-dir", str(d), "--print-timeout", "%dm" % meta["timeout_min"]]
             if sandboxed:
                 # Commands run unprompted inside the terminal sandbox; the named ones may leave it
                 # (`unsandboxed` on business accounts, `command` on the others). File edits go through
-                # the file tools, which accept-edits approves inside the workspace - a read-only worker
+                # the file tools, which accept-edits approves inside the workspace - a read-only agent
                 # does not get that, so it cannot write at all.
                 settings = {"toolPermission": "proceed-in-sandbox", "enableTerminalSandbox": True}
                 rules = [r % c for c in meta.get("run") or [] for r in ("unsandboxed(%s)", "command(%s)")]
@@ -552,7 +552,7 @@ def cmd_wait(a):
     missing = {d: 0 for d in dirs}
     while time.time() < deadline and any(state(d) == "RUNNING" for d in dirs):
         time.sleep(5)
-        # A worker whose window is gone (its own, or the whole session) will never report:
+        # An agent whose window is gone (its own, or the whole session) will never report:
         # do not wait out the whole timeout for it.
         windows = live_windows()
         if windows is None:
@@ -562,7 +562,7 @@ def cmd_wait(a):
                 continue
             missing[d] = 0 if worker_name(d) in windows else missing[d] + 1
             if missing[d] >= 3 and state(d) == "RUNNING":
-                (d / "done").write_text("LOST (tmux window ended before the worker finished)", encoding="utf-8")
+                (d / "done").write_text("LOST (tmux window ended before the agent finished)", encoding="utf-8")
     for d in dirs:
         print("%s: %s" % (d.name, state(d)))
 
@@ -623,7 +623,7 @@ def cmd_down(_):
 
 
 def cmd_prune(a):
-    """Remove run and job records older than --days. A worker that is still running is never touched."""
+    """Remove run and job records older than --days. An agent that is still running is never touched."""
     cutoff = time.time() - a.days * 86400
     for d in sorted(JOBS.glob("*")) if JOBS.exists() else []:
         started = read_json(d / "job.json").get("started")
@@ -657,7 +657,7 @@ def cmd_version(_):
     print(f.read_text(encoding="utf-8").strip() if f.exists() else "unknown (not installed with the install script)")
 
 
-# --- jobs: the manager's own work is recorded, verified and audited ----------------------------
+# --- jobs: the coordinating agent's own work is recorded, verified and audited ----------------------------
 
 def session_id():
     return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
@@ -737,7 +737,7 @@ def add_record(d, kind, data):
 
 
 def job_workers(job_id):
-    """Every worker started under this job, auditors excluded."""
+    """Every agent started under this job, auditors excluded."""
     for d in sorted(RUNS.glob("*_*")) if RUNS.exists() else []:
         meta = read_json(d / "meta.json")
         if meta.get("job") == job_id and not meta.get("audit"):
@@ -784,7 +784,7 @@ def gate(d, job, tree=None):
         if worker_state == "RUNNING":
             reasons.append("the audit is still running: `orch.py wait %s`" % worker_name(RUNS / last["worker"]))
         elif not worker_state.startswith("SUCCESS"):
-            reasons.append("the audit worker ended with %s: run the audit again "
+            reasons.append("the audit agent ended with %s: run the audit again "
                            "(with another --model if the quota ran out)" % worker_state)
         elif last.get("tree") != tree:
             reasons.append("files changed after the audit: verify and audit again")
@@ -793,7 +793,7 @@ def gate(d, job, tree=None):
     return reasons
 
 
-AUDIT_TASK = """You are an independent auditor. A manager (an AI model) ran a job for a user in the project
+AUDIT_TASK = """You are an independent auditor. A coordinating agent (an AI model) ran a job for a user in the project
 directory and wrote a report about it. Your job is to find where the report and the work disagree
 with each other and with what the user asked for. Assume the report may be wrong or incomplete.
 This is a read-only task: change nothing.
@@ -801,10 +801,10 @@ This is a read-only task: change nothing.
 Read these files first (they are in {RUN_DIR}):
 
 - request.md       what the user asked for, in the user's own words
-- report.md        what the manager says was done
+- report.md        what the coordinating agent says was done
 - diff.patch       every change made to the repository during the job (the ground truth)
 - verification.txt the proving commands the helper ran itself, with exit codes and output
-- workers.txt      the workers the manager used, their end states and failed change checks
+- agents.txt      the agents the coordinating agent used, their end states and failed change checks
 
 You may read any file in the project directory to check a claim.
 
@@ -855,7 +855,7 @@ def cmd_job_start(a):
            "started": time.time(), "base_tree": base, "head": (git(top, "rev-parse", "HEAD") or "").strip()}
     (d / "job.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
     print("job %s opened for %s" % (job_id, top))
-    print("next: spawn workers, then `job verify -- <command>`, `job audit --report-file <report>`, `job show`")
+    print("next: spawn agents, then `job verify -- <command>`, `job audit --report-file <report>`, `job show`")
 
 
 def cmd_job_verify(a):
@@ -901,29 +901,29 @@ def cmd_job_audit(a):
     patch = git(top, "diff", job["base_tree"], tree) or ""
     stat = git(top, "diff", "--stat", job["base_tree"], tree) or ""
 
-    by_worker, workers = {}, []
+    by_worker, agents = {}, []
     for rd, meta in job_workers(job["id"]):
         check = read_json(rd / "check.json")
-        workers.append("%s  model=%s%s  %s" % (meta.get("name"), meta.get("model"),
+        agents.append("%s  model=%s%s  %s" % (meta.get("name"), meta.get("model"),
                                                "  read-only" if meta.get("read_only") else "", state(rd)))
-        workers.extend("    changed outside what it was allowed: %s" % p for p in check.get("outside") or [])
+        agents.extend("    changed outside what it was allowed: %s" % p for p in check.get("outside") or [])
         if not meta.get("read_only"):
             for p, digest in (check.get("digests") or {}).items():
                 by_worker.setdefault(p, set()).add(digest)
-    # A changed file whose present content no worker left behind was written or edited by the manager.
+    # A changed file whose present content no agent left behind was written or edited by the coordinating agent.
     unreviewed = [p for p in names if file_digest(Path(top) / p) not in by_worker.get(p, ())]
     if unreviewed:
-        note = ("These changed files were written or last edited by the manager itself, outside any worker "
+        note = ("These changed files were written or last edited by the coordinating agent itself, outside any agent "
                 "run, and nobody else has read them. Review them as a code reviewer would:\n\n"
                 + "\n".join("- " + p for p in unreviewed))
     else:
-        note = "Every changed file was last written by a worker; none was edited by the manager afterwards."
+        note = "Every changed file was last written by an agent; none was edited by the coordinating agent afterwards."
 
     verification = []
     for v in records(d, "verify"):
         on_final = "on the final files" if v.get("tree") == tree else "STALE: files changed after this run"
         if v.get("cmd") is None:
-            verification.append("#%d  no proving command - the manager's reason: %s  [%s]"
+            verification.append("#%d  no proving command - the coordinating agent's reason: %s  [%s]"
                                 % (v["n"], v.get("reason"), on_final))
             continue
         verification.append("#%d  exit %s  [%s]  %s" % (v["n"], v.get("exit"), on_final, v["cmd"]))
@@ -940,10 +940,10 @@ def cmd_job_audit(a):
         "report.md": report,
         "diff.patch": "%d file(s) changed:\n%s\n%s" % (len(names), stat, patch),
         "verification.txt": ("\n".join(verification) or "No verification was recorded.") + "\n",
-        "workers.txt": ("\n".join(workers) or "No workers were used: the manager did all of the work itself.") + "\n",
+        "agents.txt": ("\n".join(agents) or "No agents were used: the coordinating agent did all of the work itself.") + "\n",
     }
     if a.model.startswith("claude"):
-        print("note: %s is the manager's own model family. Tell the user the audit was not independent "
+        print("note: %s is the coordinating agent's own model family. Tell the user the audit was not independent "
               "in that sense." % a.model)
     name = "audit%d-%s" % (n, job["id"])
     rd = start_worker(name, a.model, top, AUDIT_TASK % {"unreviewed": note}, a.timeout_min, read_only=True,
@@ -959,7 +959,7 @@ def cmd_job_show(a):
     print("=== JOB %s  %s ===" % (job["id"], job["top"]))
     print("--- the user's request, as recorded ---")
     print((d / "request.md").read_text(encoding="utf-8").strip())
-    print("\n--- verification (run by the helper, not reported by the manager) ---")
+    print("\n--- verification (run by the helper, not reported by the coordinating agent) ---")
     verifications = records(d, "verify")
     for v in verifications:
         fresh = "final files" if v.get("tree") == tree else "STALE"
@@ -1052,7 +1052,7 @@ def hook_verdict(data):
         d, job = found
         reasons = gate(d, job)
         if reasons:
-            return ("Manager job %s is open for %s and its work has not passed the gate:\n%s\n"
+            return ("Team job %s is open for %s and its work has not passed the gate:\n%s\n"
                     "Commit and push stay blocked until it does (`orch.py job show`). Only the user can lift this, "
                     "by running `orch.py job abandon --reason ...` in their own terminal."
                     % (job["id"], job["top"], "\n".join("- " + r for r in reasons)))
@@ -1064,7 +1064,7 @@ def cmd_hook(_):
     try:
         verdict = hook_verdict(json.load(sys.stdin))
     except Exception as e:
-        print("manager hook error (not blocking): %s" % e, file=sys.stderr)
+        print("team hook error (not blocking): %s" % e, file=sys.stderr)
         sys.exit(0)
     if verdict:
         print(verdict, file=sys.stderr)
@@ -1106,7 +1106,7 @@ def edit_settings(install):
 
 def cmd_hook_install(_):
     edit_settings(True)
-    print("hook installed in %s: `git commit` and `git push` by Claude are refused while a manager job "
+    print("hook installed in %s: `git commit` and `git push` by Claude are refused while a team job "
           "is open and unaudited. New sessions pick it up." % SETTINGS)
 
 
@@ -1137,18 +1137,18 @@ def main():
     s.add_argument("--timeout-min", type=int, default=30)
     s.add_argument("--skip-permissions", action="store_true")
     s.add_argument("--allow", action="append", metavar="PATH",
-                   help="file, folder or glob (relative to --cwd) the worker may change; repeatable. "
+                   help="file, folder or glob (relative to --cwd) the agent may change; repeatable. "
                         "Changes elsewhere are reported as a failed check")
     s.add_argument("--run", action="append", metavar="COMMAND",
-                   help="command prefix an agy worker may run outside the sandbox (tests, builds, installs: "
+                   help="command prefix an agy-run agent may run outside the sandbox (tests, builds, installs: "
                         "anything that writes files or needs the network); repeatable")
     s.add_argument("--sandbox", choices=["auto", "on", "off"], default="auto",
                    help="agy only. on: commands run unprompted in the terminal sandbox, edits go through the "
                         "file tools. auto (default): on when this account refuses headless shell commands")
     s.add_argument("--no-job", action="store_true",
-                   help="start a worker in a git repository without an open job (nothing will audit it)")
+                   help="start an agent in a git repository without an open job (nothing will audit it)")
     s.add_argument("--read-only", action="store_true",
-                   help="reviewer mode: a claude-* worker gets no write tools; any change to the working tree "
+                   help="reviewer mode: a claude-* agent gets no write tools; any change to the working tree "
                         "is reported as a failed check")
     s.set_defaults(fn=cmd_spawn)
 
