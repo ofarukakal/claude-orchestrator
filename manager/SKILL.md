@@ -90,7 +90,11 @@ tell the user the auditor was of your own family.
   - **neon** — important work: architecture-sensitive or cross-cutting changes, subtle concurrency
     or data-integrity logic, security-relevant code, anything expensive to get wrong, and any task
     Hydrogen has already failed.
-  - Effort defaults to `high`. Use `medium` for trivial pieces, `xhigh` for the hardest.
+  - **carbon** — only on accounts signed in with a Google Cloud project (`orch.py check` lists it).
+    It has not been through `bench/`, so nothing here ranks it against Hydrogen and Neon: use it
+    when the user asks for it, and do not give it a checking role until it has been measured.
+  - Effort defaults to `high`. Use `medium` for trivial pieces, `xhigh` for the hardest (Carbon
+    stops at `high`).
 - Tell the user the split and the tier of each piece in a few lines, then start. Do not wait for
   approval unless a piece is destructive or outward-facing (deploys, pushes, data deletion).
 
@@ -136,6 +140,13 @@ orch.py result api-fix auth-redesign
   `--cwd`) the task lets the worker change. The helper records the working tree before the worker
   starts and compares it afterwards; it does not stop a worker from writing elsewhere, it tells you
   that it did.
+- **Pass `--run "<command>"`** for every command the worker must run that writes files or needs the
+  network: the proving command above all (`--run "npm test"`, `--run "python3 -m pytest"`), builds,
+  installs. On accounts where headless `agy` refuses shell commands, the helper runs the worker in
+  the terminal sandbox: reading and searching commands run unprompted, files are written with the
+  worker's file tools, and only the `--run` prefixes may leave the sandbox. A worker that needs a
+  command you did not name stops and ends `DENIED`; add the `--run` and start it again. Give the
+  narrowest prefix that works, never a bare interpreter or shell (`--run python3`, `--run bash`).
 - **Pass `--read-only`** for review and security roles instead of `--allow`. A `claude-*` worker
   then has no write tools and no connectors (only reading, searching and
   `git diff/log/show/status/blame`);
@@ -149,7 +160,9 @@ orch.py result api-fix auth-redesign
 - A finished worker's state is one of: `SUCCESS`; `ERROR` or `NO_RESULT` (read `stderr.log`);
   `QUOTA` (the Google quota ran out); `TIMEOUT` (it ran past `--timeout-min` and was stopped);
   `LOST` (its tmux window closed before it finished); `CRASHED` (the helper itself failed);
-  `KILLED`. Any of these can be followed by `| CHECK: ...`, which means the change check failed.
+  `KILLED`; `DENIED` (headless mode refused a tool the worker needed and it produced nothing). Any
+  of these can be followed by `| CHECK: ...`, which means the change check failed, or by
+  `| DENIED: ...`, which names tools that were refused along the way.
 - The user can watch with `tmux attach -t orch`; mention this once.
 - Run records live in `~/.claude/manager-runs/<timestamp>_<name>/` (task, events, stderr, result,
   change check). They hold project code; `orch.py prune` removes those older than 14 days
@@ -272,6 +285,12 @@ How to brief each role:
 - Do not pass `--mode auto`: some accounts reject it. The default mode edits files and runs commands
   without prompting. If a worker reports that an action was denied, re-run that piece with
   `--skip-permissions` only after the user agrees, since it auto-approves every tool call.
+- The Antigravity desktop app shares its settings with `agy`, and a Google Cloud (business) sign-in
+  has no auto mode: headless shell commands are then refused outright. The helper detects this with
+  one small probe (remembered until `agy` or its settings change) and switches workers to the
+  sandbox profile described under `--run`; `--sandbox on|off` overrides the detection. Under that
+  profile a read-only `agy` worker cannot write at all. The user's own preset is never changed, and
+  `--skip-permissions` stays a last resort that needs the user's agreement.
 - A `claude-*` worker cannot write inside `~/.claude` (Claude Code treats it as protected), so never
   point `--cwd` at a folder under it.
 - The tmux session can end on its own and take every worker in it with it (seen once with six

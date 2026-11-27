@@ -165,7 +165,14 @@ kayıt dosyalarını elle değiştiren birini durdurmaz.
 - **Salt okunur roller:** review ve güvenlik işçileri `--read-only` ile açılır. Claude işçisinde
   yazma araçları kapalıdır; Gemini işçisinde yazmama talimatı verilir ve yaptığı her değişiklik
   denetimde hata olarak görünür.
-- **Durumlar:** kota bitince `QUOTA`, süre dolunca `TIMEOUT`, işçinin tmux penceresi kapanınca
+- **Sandbox profili:** Google Cloud girişli hesaplarda başsız `agy` kabuk komutlarını reddeder.
+  Araç bunu küçük bir yoklamayla anlar ve işçileri terminal sandbox'ında çalıştırır: okuma
+  komutları onaysız çalışır, dosyalar işçinin dosya aracıyla yazılır, yalnızca `--run` ile adı
+  verilen komutlar (test, build) sandbox dışına çıkar. Antigravity uygulamasındaki izin ayarın
+  değişmez.
+- **Carbon:** `--tier carbon`, Google Cloud girişiyle görünür. `bench/` ile ölçülene kadar
+  denetim rolü verilmez.
+- **Durumlar:** izin reddiyle boş dönen işçi `DENIED`, kota bitince `QUOTA`, süre dolunca `TIMEOUT`, işçinin tmux penceresi kapanınca
   `LOST` yazılır.
 
 Çalışma kayıtları `~/.claude/manager-runs/` altında tutulur ve proje kodunu içerir. Eskileri

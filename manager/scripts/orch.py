@@ -5,8 +5,8 @@ Works the same on Windows (psmux provides `tmux`) and macOS/Linux (real tmux).
 Standard library only.
 
   orch.py check
-  orch.py spawn  NAME --tier hydrogen|neon [--effort high] --cwd DIR (--task TEXT | --task-file FILE)
-                      [--allow PATH ...] [--read-only]
+  orch.py spawn  NAME --tier hydrogen|neon|carbon [--effort high] --cwd DIR (--task TEXT | --task-file FILE)
+                      [--allow PATH ...] [--run COMMAND ...] [--read-only] [--sandbox auto|on|off]
   orch.py status
   orch.py wait   NAME [NAME ...] [--timeout-min 9]
   orch.py result NAME [NAME ...]
@@ -39,6 +39,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -216,6 +217,33 @@ def change_check(before, meta, d, started):
             "shared_with": overlapping_workers(d, cwd, started)}
 
 
+def agy_profile(exe):
+    """How headless agy treats shell commands on this account: "default" when it runs them, "sandbox"
+    when it refuses them (the request-review preset, which business sign-ins cannot leave through
+    auto mode). Found by one small probe, remembered until agy or its settings change."""
+    watched = (Path(exe), Path.home() / ".gemini" / "config" / "config.json",
+               Path.home() / ".gemini" / "antigravity-cli" / "settings.json")
+    key = "|".join(str(int(f.stat().st_mtime)) if f.exists() else "-" for f in watched)
+    cache = RUNS / ".agy-profile.json"
+    cached = read_json(cache)
+    if cached.get("key") == key and cached.get("profile"):
+        return cached["profile"]
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            out = subprocess.run([exe, "-p", "Run the shell command `true`, then reply with the word ok.",
+                                  "--output-format", "json", "--model", "gemini-4-hydrogen-low"],
+                                 cwd=tmp, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                 stdin=subprocess.DEVNULL, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            return "default"
+    if '"status"' not in out.stdout:
+        return "default"  # the probe itself failed (sign-in, quota): decide nothing, try again next time
+    profile = "sandbox" if re.search(r'"denied_actions":\s*\[\s*\{', out.stdout) else "default"
+    RUNS.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps({"key": key, "profile": profile}), encoding="utf-8")
+    return profile
+
+
 def quota_hit(d):
     for name in ("stderr.log", "events.ndjson"):
         try:
@@ -254,6 +282,9 @@ def cmd_check(_):
             print("not signed in, or the plan lacks these models")
             print(stderr.strip()[-400:])
         ok = ok and all(tiers.values())
+        # Optional tier: listed for accounts signed in with a Google Cloud project.
+        carbon = re.findall(r"^(gemini-4-carbon-\w+)", stdout, re.M)
+        print("%-8s %s" % ("carbon", ", ".join(carbon) if carbon else "not available (optional)"))
     # Optional: only needed for claude-* workers (security review role).
     print("%-5s %s" % ("claude", find_tool("claude") or "not installed (optional; claude-* workers unavailable)"))
     sys.exit(0 if ok else 1)
@@ -270,6 +301,8 @@ def cmd_spawn(a):
     task = Path(a.task_file).read_text(encoding="utf-8") if a.task_file else a.task
     if not task or not task.strip():
         sys.exit("give --task or --task-file")
+    if a.tier == "carbon" and a.effort == "xhigh" and not a.model:
+        sys.exit("Carbon has no xhigh effort: use --effort high")
     job = None
     if not a.no_job and common_dir(cwd):
         job = active_job(cwd, session_id())
@@ -279,11 +312,11 @@ def cmd_spawn(a):
                      "or pass --no-job for a piece too small to be worth an audit." % cwd)
     start_worker(a.name, a.model or "gemini-4-%s-%s" % (a.tier, a.effort), cwd, task, a.timeout_min,
                  read_only=a.read_only, allow=a.allow, skip_permissions=a.skip_permissions,
-                 job=job[1]["id"] if job else None)
+                 job=job[1]["id"] if job else None, run=a.run, sandbox=a.sandbox)
 
 
 def start_worker(name, model, cwd, task, timeout_min, read_only=False, allow=None, skip_permissions=False,
-                 job=None, audit=False, files=None):
+                 job=None, audit=False, files=None, run=None, sandbox="auto"):
     """Create the run folder and open the worker's tmux window. `{RUN_DIR}` in the task and the extra
     files is replaced by the run folder, the one place besides the project a worker can read."""
     d = RUNS / ("%s_%s" % (time.strftime("%Y%m%d-%H%M%S"), name))
@@ -294,7 +327,7 @@ def start_worker(name, model, cwd, task, timeout_min, read_only=False, allow=Non
     engine = "claude" if model.startswith("claude") else "agy"
     meta = {"name": name, "model": model, "engine": engine, "cwd": str(cwd), "timeout_min": timeout_min,
             "skip_permissions": skip_permissions, "read_only": read_only, "allow": allow or [],
-            "job": job, "audit": audit}
+            "job": job, "audit": audit, "run": run or [], "sandbox": sandbox}
     (d / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     me = str(Path(__file__).resolve())
@@ -398,6 +431,18 @@ def run_worker(d):
     engine = meta.get("engine", "agy")
     exe = find_tool(engine)
     status, code, final, check = "NO_RESULT", -1, None, None
+    sandboxed = False
+    if exe and engine == "agy" and not meta.get("skip_permissions"):
+        choice = meta.get("sandbox") or "auto"
+        sandboxed = choice == "on" or (choice == "auto" and agy_profile(exe) == "sandbox")
+    if sandboxed:
+        runs = meta.get("run") or []
+        prompt += (
+            " Shell commands run in a sandbox that cannot write files or reach the network: create and edit "
+            "files with your file tools, never with shell redirection, mkdir, cp or scripts. "
+            + ("These commands may run outside the sandbox: %s. " % "; ".join(runs) if runs else "")
+            + "If a command you need is refused, do not work around it: name it in your report."
+        )
     if not exe:
         status = "%s_NOT_FOUND" % engine.upper()
     else:
@@ -415,10 +460,22 @@ def run_worker(d):
             # A worker started from inside a Claude Code session must not inherit that session's wiring.
             env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE", "ANTHROPIC"))}
         else:
-            # agy has no switch that removes its write tools; a read-only agy worker is held to the
-            # instruction above and to the change check below.
+            # agy has no switch that removes its write tools; outside the sandbox profile a read-only
+            # agy worker is held to the instruction above and to the change check below.
             args = [exe, "-p", prompt, "--model", meta["model"], "--output-format", "stream-json",
                     "--add-dir", str(d), "--print-timeout", "%dm" % meta["timeout_min"]]
+            if sandboxed:
+                # Commands run unprompted inside the terminal sandbox; the named ones may leave it
+                # (`unsandboxed` on business accounts, `command` on the others). File edits go through
+                # the file tools, which accept-edits approves inside the workspace - a read-only worker
+                # does not get that, so it cannot write at all.
+                settings = {"toolPermission": "proceed-in-sandbox", "enableTerminalSandbox": True}
+                rules = [r % c for c in meta.get("run") or [] for r in ("unsandboxed(%s)", "command(%s)")]
+                if rules:
+                    settings["permissions"] = {"allow": rules}
+                args += ["--settings", json.dumps(settings)]
+                if not read_only:
+                    args += ["--mode", "accept-edits"]
         if meta.get("skip_permissions"):
             args.append("--dangerously-skip-permissions")
         started = time.time()
@@ -460,6 +517,10 @@ def run_worker(d):
         if final:
             (d / "result.json").write_text(json.dumps(final, indent=2, ensure_ascii=False), encoding="utf-8")
             status = final.get("status", "UNKNOWN")
+            # agy calls a turn a success even when it stopped because headless mode refused a tool.
+            denied = sorted({a.get("display_name") or a.get("action") or "?" for a in final.get("denied_actions") or []})
+            if denied and not (final.get("response") or "").strip():
+                status = "DENIED"
         if status != "SUCCESS":
             if quota_hit(d):
                 status = "QUOTA"
@@ -468,6 +529,8 @@ def run_worker(d):
         check = change_check(before, meta, d, started)
         (d / "check.json").write_text(json.dumps(check, indent=2, ensure_ascii=False), encoding="utf-8")
     verdict = "%s exit=%s" % (status, code)
+    if final and final.get("denied_actions"):
+        verdict += " | DENIED: " + ", ".join(denied)
     if check and check.get("problems"):
         verdict += " | CHECK: " + "; ".join(check["problems"])
     (d / "done").write_text(verdict, encoding="utf-8")
@@ -1065,7 +1128,7 @@ def main():
 
     s = sub.add_parser("spawn")
     s.add_argument("name")
-    s.add_argument("--tier", choices=["hydrogen", "neon"], default="hydrogen")
+    s.add_argument("--tier", choices=["hydrogen", "neon", "carbon"], default="hydrogen")
     s.add_argument("--effort", choices=["low", "medium", "high", "xhigh"], default="high")
     s.add_argument("--model", help="full model id; overrides --tier/--effort. A claude-* id runs on the claude CLI")
     s.add_argument("--cwd", default=".")
@@ -1076,6 +1139,12 @@ def main():
     s.add_argument("--allow", action="append", metavar="PATH",
                    help="file, folder or glob (relative to --cwd) the worker may change; repeatable. "
                         "Changes elsewhere are reported as a failed check")
+    s.add_argument("--run", action="append", metavar="COMMAND",
+                   help="command prefix an agy worker may run outside the sandbox (tests, builds, installs: "
+                        "anything that writes files or needs the network); repeatable")
+    s.add_argument("--sandbox", choices=["auto", "on", "off"], default="auto",
+                   help="agy only. on: commands run unprompted in the terminal sandbox, edits go through the "
+                        "file tools. auto (default): on when this account refuses headless shell commands")
     s.add_argument("--no-job", action="store_true",
                    help="start a worker in a git repository without an open job (nothing will audit it)")
     s.add_argument("--read-only", action="store_true",
